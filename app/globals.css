@@ -1,0 +1,205 @@
+/* ============================================================================
+   제니트리 통합 디자인 시스템 — MASTER v3.0 CSS 변수 및 베이스 스타일
+   (app/globals.css)
+   ============================================================================ */
+
+/* ── 웹폰트 로드: Pretendard Variable & Figtree ── */
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css");
+@import url("https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800;900&display=swap");
+
+:root {
+  /* ── 1. Seed Tokens (원점) ── */
+  --seed-color-primary: #1F2328;   /* 제니트리 대표색 = Neutral Charcoal */
+  --seed-color-neutral: #1F2328;
+  --seed-color-accent:  #305CDE;   /* 상호작용/강조 블루 */
+  --seed-color-success: #14A870;   /* 성공/정상/안전 에메랄드 그린 */
+  --seed-color-warning: #F0B01C;   /* 주의/점검 옐로우/앰버 */
+  --seed-color-error:   #E14B4B;   /* 오류/위험/즉시교체 레드 */
+  --seed-color-info:    #305CDE;
+
+  /* ── 2. Neutral Palette ── */
+  --color-bg-base:      #F6F8FA;   /* 페이지 기본 배경색 */
+  --color-bg-container: #FFFFFF;   /* 카드/컨테이너 배경 */
+  --color-bg-elevated:  #FFFFFF;
+  --color-bg-muted:     #F0F2F5;   /* 보조 배경 */
+  
+  --color-border-subtle:#E5E7EB;   /* 옅은 테두리 */
+  --color-border-base:  #D1D5DB;   /* 기본 테두리 */
+  --color-border-focus: #305CDE;
+
+  --color-text-title:   #111827;   /* 헤드라인 */
+  --color-text-body:    #1F2328;   /* 기본 본문 */
+  --color-text-sub:     #4B5563;   /* 보조 텍스트 */
+  --color-text-muted:   #6B7280;   /* 설명/안내 문구 */
+  --color-text-white:   #FFFFFF;
+
+  /* ── 3. Spacing & Typography & Radius ── */
+  --font-family-base: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-family-num:  "Figtree", "Pretendard Variable", sans-serif;
+  
+  --radius-sm: 4px;
+  --radius-base: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-base: 0 4px 6px -1px rgba(0, 0, 0, 0.06), 0 2px 4px -1px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
+}
+
+/* ── Global Reset ── */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--color-bg-base);
+  color: var(--color-text-body);
+  font-family: var(--font-family-base);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+/* 숫자 폰트 전용 클래스 */
+.font-num {
+  font-family: var(--font-family-num);
+}
+
+/* ── 제니트리 컴포넌트 유틸리티 ── */
+.jt-container {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 24px 20px 80px;
+}
+
+/* 카드 */
+.jt-card {
+  background: var(--color-bg-container);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-base);
+  box-shadow: var(--shadow-sm);
+  transition: all 0.2s ease-in-out;
+}
+
+.jt-card:hover {
+  box-shadow: var(--shadow-base);
+  border-color: #CBD5E1;
+}
+
+/* 버튼 */
+.jt-btn-primary {
+  background-color: var(--seed-color-primary);
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 8px 16px;
+  border-radius: var(--radius-base);
+  border: 1px solid var(--seed-color-primary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background-color 0.15s, opacity 0.15s;
+}
+
+.jt-btn-primary:hover {
+  background-color: #33383F;
+}
+
+.jt-btn-accent {
+  background-color: var(--seed-color-accent);
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 8px 16px;
+  border-radius: var(--radius-base);
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background-color 0.15s;
+}
+
+.jt-btn-accent:hover {
+  background-color: #2249BC;
+}
+
+.jt-btn-secondary {
+  background-color: #FFFFFF;
+  color: var(--color-text-body);
+  font-weight: 500;
+  font-size: 14px;
+  padding: 8px 16px;
+  border-radius: var(--radius-base);
+  border: 1px solid var(--color-border-base);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 0.15s;
+}
+
+.jt-btn-secondary:hover {
+  background-color: var(--color-bg-muted);
+}
+
+/* 배지 (상태 표시) */
+.jt-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.jt-badge-good {
+  background-color: #E8F8F1;
+  color: #0E774F;
+  border: 1px solid #B6EBD5;
+}
+
+.jt-badge-caution {
+  background-color: #FEF9E8;
+  color: #976508;
+  border: 1px solid #FBE8A4;
+}
+
+.jt-badge-danger {
+  background-color: #FDF2F2;
+  color: #B82525;
+  border: 1px solid #F9BDBD;
+}
+
+.jt-badge-brand {
+  background-color: #EEF2FF;
+  color: #305CDE;
+  border: 1px solid #C7D2FE;
+}
+
+/* 입력 폼 */
+.jt-input, .jt-select {
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  border: 1px solid var(--color-border-base);
+  border-radius: var(--radius-base);
+  background: #FFFFFF;
+  color: var(--color-text-body);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.jt-input:focus, .jt-select:focus {
+  border-color: var(--seed-color-accent);
+  box-shadow: 0 0 0 3px rgba(48, 92, 222, 0.12);
+}
