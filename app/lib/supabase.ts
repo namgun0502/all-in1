@@ -1,98 +1,76 @@
 // ============================================================================
-// Supabase 클라이언트 초기화 및 연결 관리 모듈
+// Supabase 클라이언트 단일 통합 운용 모듈
 // (app/lib/supabase.ts)
-// Cloudflare Pages / Workers 환경 호환 및 환경변수/로컬 키 듀얼 지원
+// 남건 지정 단일 프로젝트 전용: https://qzhgsshyhmnczmreagqd.supabase.co
 // ============================================================================
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-const STORAGE_SUPABASE_URL_KEY = "zenitree_supabase_url";
-const STORAGE_SUPABASE_ANON_KEY = "zenitree_supabase_anon_key";
+/**
+ * 프로젝트 단일 고정 Supabase 설정 상수
+ * (남건 지정 공식 프로젝트로 단일화하여 모든 환경에서 일관되게 운용)
+ */
+export const DEFAULT_SUPABASE_URL = "https://qzhgsshyhmnczmreagqd.supabase.co";
+export const DEFAULT_SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF6aGdzc2h5aG1uY3ptcmVhZ3FkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyNzc0NzksImV4cCI6MjA5Nzg1MzQ3OX0.2NZxyClmIpj7WtUuZtexZqAMuTnC7udF5FejwitzvcU";
 
 /**
- * 현재 설정된 Supabase URL 및 Anon Key 가져오기
- * 1) 브라우저 로컬 저장소 우선 (사용자가 직접 입력한 값)
- * 2) 환경변수(process.env.NEXT_PUBLIC_SUPABASE_URL / ANON_KEY)
+ * Supabase URL 스마트 정규화
  */
-export function getSupabaseCredentials(): { url: string; anonKey: string } {
-  let url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-  let anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-
-  if (typeof window !== "undefined") {
-    const localUrl = localStorage.getItem(STORAGE_SUPABASE_URL_KEY);
-    const localKey = localStorage.getItem(STORAGE_SUPABASE_ANON_KEY);
-    if (localUrl) url = localUrl;
-    if (localKey) anonKey = localKey;
-  }
-
-  return { url: url.trim(), anonKey: anonKey.trim() };
-}
-
-/**
- * Supabase 설정 여부 확인
- */
-export function isSupabaseConfigured(): boolean {
-  const { url, anonKey } = getSupabaseCredentials();
-  return Boolean(url && anonKey && url.startsWith("https://"));
-}
-
-/**
- * Supabase 클라이언트 인스턴스 반환
- */
-let cachedClient: SupabaseClient | null = null;
-let lastUrl = "";
-let lastKey = "";
-
-export function getSupabaseClient(): SupabaseClient | null {
-  const { url, anonKey } = getSupabaseCredentials();
-
-  if (!url || !anonKey || !url.startsWith("https://")) {
-    return null;
-  }
-
-  if (cachedClient && lastUrl === url && lastKey === anonKey) {
-    return cachedClient;
-  }
+export function normalizeSupabaseUrl(rawUrl: string): string {
+  let cleaned = rawUrl.trim();
+  if (!cleaned) return DEFAULT_SUPABASE_URL;
 
   try {
-    cachedClient = createClient(url, anonKey, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-      },
-    });
-    lastUrl = url;
-    lastKey = anonKey;
-    return cachedClient;
-  } catch (err) {
-    console.error("Supabase 클라이언트 초기화 오류:", err);
-    return null;
+    const urlObj = new URL(cleaned);
+    return `${urlObj.protocol}//${urlObj.host}`;
+  } catch {
+    return cleaned.replace(/\/rest\/v1\/?$/, "").replace(/\/+$/, "");
   }
 }
 
 /**
- * 사용자 입력 Supabase 연결 정보 저장
+ * 공식 단일 Supabase 접속 정보 반환
  */
-export function saveSupabaseCredentials(url: string, anonKey: string): void {
-  if (typeof window === "undefined") return;
-  const cleanUrl = url.trim();
-  const cleanKey = anonKey.trim();
+export function getSupabaseCredentials(): { url: string; anonKey: string } {
+  const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const envKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  if (cleanUrl) {
-    localStorage.setItem(STORAGE_SUPABASE_URL_KEY, cleanUrl);
-  } else {
-    localStorage.removeItem(STORAGE_SUPABASE_URL_KEY);
+  const finalUrl = normalizeSupabaseUrl(envUrl || DEFAULT_SUPABASE_URL);
+  const finalKey = (envKey || DEFAULT_SUPABASE_ANON_KEY).trim();
+
+  return {
+    url: finalUrl,
+    anonKey: finalKey,
+  };
+}
+
+/**
+ * 단일 Supabase 클라이언트 인스턴스 (싱글톤)
+ */
+let cachedClient: SupabaseClient | null = null;
+
+export function getSupabaseClient(): SupabaseClient {
+  if (cachedClient) {
+    return cachedClient;
   }
 
-  if (cleanKey) {
-    localStorage.setItem(STORAGE_SUPABASE_ANON_KEY, cleanKey);
-  } else {
-    localStorage.removeItem(STORAGE_SUPABASE_ANON_KEY);
-  }
+  const { url, anonKey } = getSupabaseCredentials();
 
-  // 캐시 리셋
-  cachedClient = null;
-  lastUrl = "";
-  lastKey = "";
+  cachedClient = createClient(url, anonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  });
+
+  return cachedClient;
+}
+
+/**
+ * 항상 단일 프로젝트로 고정 운용되므로 항상 true
+ */
+export function isSupabaseConfigured(): boolean {
+  return true;
 }

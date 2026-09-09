@@ -2,9 +2,10 @@
 
 // ============================================================================
 // 제니트리 스마트 라이프 소모품 케어 AI 앱 (app/page.tsx)
+// - 단일 Supabase 프로젝트 고정 운용 (https://qzhgsshyhmnczmreagqd.supabase.co)
+// - RLS(Row Level Security) 기반 계정별 데이터 완전 격리
+// - 이메일 회원가입 및 로그인 (비밀번호 첫 글자 실시간 힌트)
 // - 제니트리 공식 정품 로고(J⁺ Janytree) 탑재
-// - Supabase 연동 및 RLS(Row Level Security) 계정별 데이터 완전 격리
-// - 이메일 회원가입 및 로그인 (Supabase Auth & SHA-256 Fallback)
 // - 로그인 카드 하단 및 헤더 앱 설치(PWA) 버튼 연동
 // - Google Gemini AI 실시간 분석 & 회사별 공식 매뉴얼 케어 시스템
 // ============================================================================
@@ -29,9 +30,7 @@ import {
 } from "./lib/auth";
 import {
   getSupabaseClient,
-  isSupabaseConfigured,
-  getSupabaseCredentials,
-  saveSupabaseCredentials,
+  DEFAULT_SUPABASE_URL,
 } from "./lib/supabase";
 
 // PWA 설치 프롬프트 인터페이스
@@ -39,67 +38,6 @@ interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 }
-
-// 신규 가입자용 초기 샘플 데이터
-const DEFAULT_INITIAL_ITEMS: ConsumableItem[] = [
-  {
-    id: "sample-1",
-    brand: "현대/기아",
-    name: "아반떼 CN7 엔진오일 및 오일필터",
-    category: "차량",
-    installedDate: "2026-03-01",
-    condition: "normal",
-    currentUsage: 5500,
-    usageUnit: "km",
-    createdAt: new Date().toISOString(),
-    analysis: analyzeConsumableItem({
-      category: "차량",
-      brand: "현대/기아",
-      itemName: "엔진오일 및 오일필터",
-      installedDate: "2026-03-01",
-      currentUsage: 5500,
-      condition: "normal",
-    }),
-  },
-  {
-    id: "sample-2",
-    brand: "LG전자",
-    name: "퓨리케어 공기청정기 일체형 V필터",
-    category: "가전",
-    installedDate: "2025-10-10",
-    condition: "normal",
-    currentUsage: 11,
-    usageUnit: "개월",
-    createdAt: new Date().toISOString(),
-    analysis: analyzeConsumableItem({
-      category: "가전",
-      brand: "LG전자",
-      itemName: "퓨리케어 공기청정기 일체형 V필터",
-      installedDate: "2025-10-10",
-      currentUsage: 11,
-      condition: "normal",
-    }),
-  },
-  {
-    id: "sample-3",
-    brand: "애플",
-    name: "아이폰 15 Pro 내장 배터리",
-    category: "IT기기",
-    installedDate: "2024-09-20",
-    condition: "harsh",
-    currentUsage: 23,
-    usageUnit: "개월",
-    createdAt: new Date().toISOString(),
-    analysis: analyzeConsumableItem({
-      category: "IT기기",
-      brand: "애플",
-      itemName: "아이폰 / 맥북 배터리",
-      installedDate: "2024-09-20",
-      currentUsage: 23,
-      condition: "harsh",
-    }),
-  },
-];
 
 export default function SmartLifeCarePage() {
   // ── 1. 인증(Auth) 상태 ──
@@ -120,7 +58,6 @@ export default function SmartLifeCarePage() {
   const [selectedCategory, setSelectedCategory] = useState<string>("전체");
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState<boolean>(false);
-  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState<boolean>(false);
   const [activeDetailItem, setActiveDetailItem] = useState<ConsumableItem | null>(null);
   const [showJsonRaw, setShowJsonRaw] = useState<boolean>(false);
 
@@ -128,11 +65,6 @@ export default function SmartLifeCarePage() {
   const [geminiApiKey, setGeminiApiKey] = useState<string>("");
   const [tempApiKey, setTempApiKey] = useState<string>("");
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
-
-  // Supabase 설정 상태
-  const [supabaseConfigured, setSupabaseConfigured] = useState<boolean>(false);
-  const [tempSbUrl, setTempSbUrl] = useState<string>("");
-  const [tempSbKey, setTempSbKey] = useState<string>("");
 
   // 이미지 첨부 관련 상태
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -152,29 +84,22 @@ export default function SmartLifeCarePage() {
 
   // ── 4. 초기화 및 세션 / PWA 이벤트 감지 ──
   useEffect(() => {
-    // 1) Supabase 설정 상태 확인
-    const isConfig = isSupabaseConfigured();
-    setSupabaseConfigured(isConfig);
-    const creds = getSupabaseCredentials();
-    setTempSbUrl(creds.url);
-    setTempSbKey(creds.anonKey);
-
-    // 2) 로그인 세션 확인
+    // 1) 로그인 세션 확인
     const session = getCurrentSession();
     if (session.email) {
       setCurrentUser(session.email);
       setCurrentUserId(session.userId);
-      loadUserItems(session.email, session.userId);
+      loadUserItems(session.userId);
     }
 
-    // 3) Gemini API Key 로드
+    // 2) Gemini API Key 로드
     const savedKey = localStorage.getItem("zenitree_gemini_key");
     if (savedKey) {
       setGeminiApiKey(savedKey);
       setTempApiKey(savedKey);
     }
 
-    // 4) PWA 설치 이벤트(beforeinstallprompt) 등록
+    // 3) PWA 설치 이벤트(beforeinstallprompt) 등록
     const handleBeforeInstall = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e as BeforeInstallPromptEvent);
@@ -186,61 +111,36 @@ export default function SmartLifeCarePage() {
     };
   }, []);
 
-  // ── 5. 사용자별 소모품 목록 로드 (Supabase RLS 우선 & 로컬 Fallback) ──
-  const loadUserItems = async (userEmail: string, userId: string | null) => {
+  // ── 5. 단일 Supabase에서 본인(RLS) 소모품 목록 불러오기 ──
+  const loadUserItems = async (userId: string | null) => {
     const supabase = getSupabaseClient();
-
-    // 1) Supabase 연동 시 RLS 쿼리 실행
-    if (supabase && userId) {
-      try {
-        const { data, error } = await supabase
-          .from("consumable_items")
-          .select("*")
-          .order("created_at", { ascending: false });
-
-        if (!error && data) {
-          const mapped: ConsumableItem[] = data.map((row: any) => ({
-            id: row.id,
-            brand: row.brand,
-            name: row.name,
-            category: row.category as ItemCategory,
-            installedDate: row.installed_date,
-            condition: row.condition as UsageCondition,
-            currentUsage: Number(row.current_usage),
-            usageUnit: row.usage_unit as any,
-            analysis: row.analysis,
-            createdAt: row.created_at,
-          }));
-          setItems(mapped);
-          return;
-        }
-      } catch (err) {
-        console.warn("Supabase 데이터 조회 실패, 로컬 저장소로 전환합니다.", err);
-      }
-    }
-
-    // 2) Fallback: 로컬 스토리지 계정별 데이터 격리
     try {
-      const storageKey = `zenitree_items_${userEmail}`;
-      const saved = localStorage.getItem(storageKey);
-      if (saved) {
-        setItems(JSON.parse(saved));
+      const { data, error } = await supabase
+        .from("consumable_items")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (!error && data) {
+        const mapped: ConsumableItem[] = data.map((row: any) => ({
+          id: row.id,
+          brand: row.brand,
+          name: row.name,
+          category: row.category as ItemCategory,
+          installedDate: row.installed_date,
+          condition: row.condition as UsageCondition,
+          currentUsage: Number(row.current_usage),
+          usageUnit: row.usage_unit as any,
+          analysis: row.analysis,
+          createdAt: row.created_at,
+        }));
+        setItems(mapped);
       } else {
-        setItems(DEFAULT_INITIAL_ITEMS);
-        localStorage.setItem(storageKey, JSON.stringify(DEFAULT_INITIAL_ITEMS));
+        console.warn("데이터 로드 오류:", error?.message);
+        setItems([]);
       }
-    } catch {
-      setItems(DEFAULT_INITIAL_ITEMS);
-    }
-  };
-
-  // 소모품 데이터 저장
-  const saveUserItems = async (userEmail: string, newItems: ConsumableItem[]) => {
-    setItems(newItems);
-    try {
-      localStorage.setItem(`zenitree_items_${userEmail}`, JSON.stringify(newItems));
     } catch (err) {
-      console.error("로컬 저장 실패", err);
+      console.error("Supabase 통신 오류:", err);
+      setItems([]);
     }
   };
 
@@ -270,7 +170,7 @@ export default function SmartLifeCarePage() {
           const cleanEmail = authEmail.trim().toLowerCase();
           setCurrentUser(cleanEmail);
           setCurrentUserId(res.userId || null);
-          await loadUserItems(cleanEmail, res.userId || null);
+          await loadUserItems(res.userId || null);
         } else {
           setAuthError(res.message);
         }
@@ -280,7 +180,7 @@ export default function SmartLifeCarePage() {
           const cleanEmail = authEmail.trim().toLowerCase();
           setCurrentUser(cleanEmail);
           setCurrentUserId(res.userId || null);
-          await loadUserItems(cleanEmail, res.userId || null);
+          await loadUserItems(res.userId || null);
         } else {
           setAuthError(res.message);
         }
@@ -296,27 +196,17 @@ export default function SmartLifeCarePage() {
       setCurrentUser(null);
       setCurrentUserId(null);
       setAuthPassword("");
+      setItems([]);
     }
   };
 
-  // ── 8. Gemini 및 Supabase 설정 핸들러 ──
+  // ── 8. Gemini 설정 핸들러 ──
   const handleSaveApiKey = () => {
     const trimmed = tempApiKey.trim();
     setGeminiApiKey(trimmed);
     localStorage.setItem("zenitree_gemini_key", trimmed);
     setIsApiKeyModalOpen(false);
     alert(trimmed ? "Google Gemini API 키가 저장되었습니다." : "API 키가 삭제되었습니다.");
-  };
-
-  const handleSaveSupabaseConfig = () => {
-    saveSupabaseCredentials(tempSbUrl, tempSbKey);
-    const isConfig = isSupabaseConfigured();
-    setSupabaseConfigured(isConfig);
-    setIsSupabaseModalOpen(false);
-    alert(isConfig ? "⚡ Supabase 클라우드 데이터베이스와 연결되었습니다!" : "Supabase 연결 정보가 초기화되었습니다.");
-    if (currentUser) {
-      loadUserItems(currentUser, currentUserId);
-    }
   };
 
   // ── 9. 이미지 업로드 처리 ──
@@ -351,10 +241,10 @@ export default function SmartLifeCarePage() {
     }
   };
 
-  // ── 10. 소모품 신규 등록 (Gemini AI + Supabase RLS Insert) ──
+  // ── 10. 소모품 신규 등록 (Gemini AI + 단일 Supabase Insert) ──
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.itemName.trim() || !currentUser) {
+    if (!formData.itemName.trim() || !currentUser || !currentUserId) {
       alert("소모품명을 입력해주세요.");
       return;
     }
@@ -428,29 +318,30 @@ export default function SmartLifeCarePage() {
       createdAt: new Date().toISOString(),
     };
 
-    // 1) Supabase 연동 시 DB Insert
+    // Supabase DB에 저장
     const supabase = getSupabaseClient();
-    if (supabase && currentUserId) {
-      try {
-        await supabase.from("consumable_items").insert({
-          id: newItemId,
-          user_id: currentUserId,
-          brand: newItem.brand,
-          name: newItem.name,
-          category: newItem.category,
-          installed_date: newItem.installedDate,
-          condition: newItem.condition,
-          current_usage: newItem.currentUsage,
-          usage_unit: newItem.usageUnit,
-          analysis: newItem.analysis,
-        });
-      } catch (err) {
-        console.warn("Supabase INSERT 실패, 로컬에 저장합니다.", err);
+    try {
+      const { error } = await supabase.from("consumable_items").insert({
+        id: newItemId,
+        user_id: currentUserId,
+        brand: newItem.brand,
+        name: newItem.name,
+        category: newItem.category,
+        installed_date: newItem.installedDate,
+        condition: newItem.condition,
+        current_usage: newItem.currentUsage,
+        usage_unit: newItem.usageUnit,
+        analysis: newItem.analysis,
+      });
+
+      if (error) {
+        alert(`저장 중 안내: ${error.message}`);
       }
+    } catch (err) {
+      console.error("Supabase INSERT 오류:", err);
     }
 
-    const updated = [newItem, ...items];
-    saveUserItems(currentUser, updated);
+    setItems([newItem, ...items]);
     setIsAiLoading(false);
     setIsModalOpen(false);
     handleClearImage();
@@ -486,21 +377,18 @@ export default function SmartLifeCarePage() {
       condition: target.condition,
     });
 
-    // Supabase DB Update
     const supabase = getSupabaseClient();
-    if (supabase && currentUserId) {
-      try {
-        await supabase
-          .from("consumable_items")
-          .update({
-            installed_date: todayStr,
-            current_usage: 0,
-            analysis: newAnalysis,
-          })
-          .eq("id", id);
-      } catch (err) {
-        console.warn("Supabase UPDATE 실패", err);
-      }
+    try {
+      await supabase
+        .from("consumable_items")
+        .update({
+          installed_date: todayStr,
+          current_usage: 0,
+          analysis: newAnalysis,
+        })
+        .eq("id", id);
+    } catch (err) {
+      console.error("Supabase UPDATE 오류:", err);
     }
 
     const updated = items.map((i) => {
@@ -515,7 +403,7 @@ export default function SmartLifeCarePage() {
       return i;
     });
 
-    saveUserItems(currentUser, updated);
+    setItems(updated);
     if (activeDetailItem?.id === id) {
       setActiveDetailItem({
         ...target,
@@ -533,18 +421,15 @@ export default function SmartLifeCarePage() {
       return;
     }
 
-    // Supabase DB Delete
     const supabase = getSupabaseClient();
-    if (supabase && currentUserId) {
-      try {
-        await supabase.from("consumable_items").delete().eq("id", id);
-      } catch (err) {
-        console.warn("Supabase DELETE 실패", err);
-      }
+    try {
+      await supabase.from("consumable_items").delete().eq("id", id);
+    } catch (err) {
+      console.error("Supabase DELETE 오류:", err);
     }
 
     const updated = items.filter((i) => i.id !== id);
-    saveUserItems(currentUser, updated);
+    setItems(updated);
     if (activeDetailItem?.id === id) {
       setActiveDetailItem(null);
     }
@@ -653,6 +538,38 @@ export default function SmartLifeCarePage() {
                 onChange={(e) => setAuthPassword(e.target.value)}
                 required
               />
+
+              {/* 비밀번호 첫 글자 안내 힌트 */}
+              {authPassword.length > 0 ? (
+                <div
+                  style={{
+                    marginTop: "6px",
+                    fontSize: "12px",
+                    color: "#305CDE",
+                    backgroundColor: "#EEF2FF",
+                    border: "1px solid #C7D2FE",
+                    borderRadius: "4px",
+                    padding: "6px 10px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <span>
+                    💡 비밀번호 첫 글자:{" "}
+                    <strong style={{ fontSize: "14px", color: "#1E3A8A", textDecoration: "underline" }}>
+                      &apos;{authPassword.charAt(0)}&apos;
+                    </strong>
+                  </span>
+                  <span style={{ fontSize: "11px", color: "#6B7280" }}>
+                    ({authPassword.length}자리 입력 중)
+                  </span>
+                </div>
+              ) : (
+                <div style={{ marginTop: "4px", fontSize: "11px", color: "#9CA3AF" }}>
+                  비밀번호를 입력하시면 첫 글자를 바로 확인하실 수 있습니다.
+                </div>
+              )}
             </div>
 
             <button
@@ -838,33 +755,32 @@ export default function SmartLifeCarePage() {
 
           {/* 우측 세션 및 앱 설치 & 등록 버튼 */}
           <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-            {/* Supabase 상태 버튼 */}
-            <button
-              onClick={() => setIsSupabaseModalOpen(true)}
+            {/* 단일 Supabase RLS 상태 배지 */}
+            <div
               style={{
                 fontSize: "12px",
-                backgroundColor: supabaseConfigured ? "#064E3B" : "#2B313A",
-                color: supabaseConfigured ? "#34D399" : "#D1D5DB",
-                border: supabaseConfigured ? "1px solid #059669" : "1px solid #4B5563",
+                backgroundColor: "#064E3B",
+                color: "#34D399",
+                border: "1px solid #059669",
                 padding: "5px 10px",
                 borderRadius: "6px",
                 fontWeight: "600",
                 display: "flex",
                 alignItems: "center",
                 gap: "5px",
-                cursor: "pointer",
               }}
+              title={`운용 프로젝트: ${DEFAULT_SUPABASE_URL}`}
             >
               <span
                 style={{
                   width: "6px",
                   height: "6px",
                   borderRadius: "50%",
-                  backgroundColor: supabaseConfigured ? "#10B981" : "#9CA3AF",
+                  backgroundColor: "#10B981",
                 }}
               />
-              {supabaseConfigured ? "⚡ Supabase RLS 연동됨" : "⚙️ Supabase 설정"}
-            </button>
+              ⚡ Supabase RLS 연동
+            </div>
 
             {/* 앱 설치 버튼 */}
             <button
@@ -1236,124 +1152,7 @@ export default function SmartLifeCarePage() {
         )}
       </main>
 
-      {/* ── 4. Supabase 연동 설정 모달 ── */}
-      {isSupabaseModalOpen && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: "rgba(0, 0, 0, 0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "20px",
-            zIndex: 110,
-          }}
-          onClick={() => setIsSupabaseModalOpen(false)}
-        >
-          <div
-            className="jt-card"
-            style={{
-              maxWidth: "540px",
-              width: "100%",
-              padding: "28px",
-              backgroundColor: "#FFFFFF",
-              position: "relative",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              onClick={() => setIsSupabaseModalOpen(false)}
-              style={{
-                position: "absolute",
-                top: "20px",
-                right: "20px",
-                border: "none",
-                background: "transparent",
-                fontSize: "20px",
-                cursor: "pointer",
-                color: "#6B7280",
-              }}
-            >
-              ✕
-            </button>
-
-            <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#1F2328", marginBottom: "8px" }}>
-              ⚡ Supabase 클라우드 데이터베이스 설정
-            </h3>
-            <p style={{ fontSize: "13px", color: "#6B7280", lineHeight: "1.6", marginBottom: "16px" }}>
-              Supabase 프로젝트를 연결하시면 로그인 계정별로 데이터가 완전 격리(RLS)되어 실시간 저장됩니다.
-            </p>
-
-            <div style={{ marginBottom: "14px" }}>
-              <label style={{ display: "block", fontSize: "12px", fontWeight: "600", marginBottom: "4px" }}>
-                Supabase Project URL
-              </label>
-              <input
-                type="text"
-                className="jt-input font-num"
-                placeholder="https://xyzcompany.supabase.co"
-                value={tempSbUrl}
-                onChange={(e) => setTempSbUrl(e.target.value)}
-              />
-            </div>
-
-            <div style={{ marginBottom: "16px" }}>
-              <label style={{ display: "block", fontSize: "12px", fontWeight: "600", marginBottom: "4px" }}>
-                Supabase Anon Key
-              </label>
-              <input
-                type="password"
-                className="jt-input font-num"
-                placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                value={tempSbKey}
-                onChange={(e) => setTempSbKey(e.target.value)}
-              />
-            </div>
-
-            <div
-              style={{
-                backgroundColor: "#F0FDF4",
-                border: "1px solid #BBF7D0",
-                padding: "12px",
-                borderRadius: "6px",
-                fontSize: "12px",
-                color: "#166534",
-                lineHeight: "1.6",
-                marginBottom: "20px",
-              }}
-            >
-              📌 <strong>테이블 생성 안내:</strong> 프로젝트 내{" "}
-              <code>supabase/migrations/001_create_consumables_schema_with_rls.sql</code> 파일의 쿼리를 Supabase 대시보드의{" "}
-              <strong>SQL Editor</strong>에서 실행해 주세요.
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
-              <button
-                type="button"
-                onClick={() => {
-                  setTempSbUrl("");
-                  setTempSbKey("");
-                  saveSupabaseCredentials("", "");
-                  setSupabaseConfigured(false);
-                  setIsSupabaseModalOpen(false);
-                }}
-                className="jt-btn-secondary"
-              >
-                연결 해제 (로컬 모드)
-              </button>
-              <button type="button" onClick={handleSaveSupabaseConfig} className="jt-btn-primary">
-                저장 및 연결
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── 5. Gemini API Key 설정 모달 ── */}
+      {/* ── 4. Gemini API Key 설정 모달 ── */}
       {isApiKeyModalOpen && (
         <div
           style={{
@@ -1461,7 +1260,7 @@ export default function SmartLifeCarePage() {
         </div>
       )}
 
-      {/* ── 6. AI 진단 상세 모달 ── */}
+      {/* ── 5. AI 진단 상세 모달 ── */}
       {activeDetailItem && (
         <div
           style={{
@@ -1600,7 +1399,7 @@ export default function SmartLifeCarePage() {
         </div>
       )}
 
-      {/* ── 7. 신규 등록 모달 ── */}
+      {/* ── 6. 신규 등록 모달 ── */}
       {isModalOpen && (
         <div
           style={{
