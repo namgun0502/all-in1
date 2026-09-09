@@ -1,0 +1,23 @@
+﻿<?xml version=1.0 encoding=UTF-8?>
+<svg id=Janytree_App_Icon_SkyBlue xmlns=http://www.w3.org/2000/svg viewBox=0 0 512 512>
+  <defs>
+    <linearGradient id=skyGradient x1=0% y1=0% x2=100% y2=100%>
+      <stop offset=0% stop-color=#38BDF8 />
+      <stop offset=100% stop-color=#0284C7 />
+    </linearGradient>
+    <filter id=softShadow x=-10% y=-10% width=120% height=120%>
+      <feDropShadow dx=0 dy=8 stdDeviation=12 flood-color=#0369A1 flood-opacity=0.25 />
+    </filter>
+  </defs>
+
+  <rect width=512 height=512 rx=115 fill=url(#skyGradient) />
+
+  <g transform=translate(256, 256) scale(0.72) translate(-256, -256) filter=url(#softShadow)>
+    <circle cx=256 cy=256 r=190 fill=#FFFFFF />
+
+    <g fill=#0284C7>
+      <path d=M225,350 c-7,0 -14,-1.2 -20,-3.8 l-1,-0.4 v-32 l2,1.6 c5,3.8 11,5.8 18,5.8 c15,0 23,-12 23,-36 v-96 h32 v97 c0,21 -5,36 -14,47 c-9,11 -23,16 -40,16 z />
+      <path d=M330,170 h-25 v-25 h-25 v25 h-25 v25 h25 v25 h25 v-25 h25 z />
+    </g>
+  </g>
+</svg>

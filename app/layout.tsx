@@ -12,13 +12,13 @@ export const metadata: Metadata = {
   description: "차량, 가전, IT기기, 생필품 등 모든 자산의 수명과 교체 주기를 회사별 공식 기준으로 정밀 분석·관리하는 제니트리 케어 솔루션",
   manifest: "/manifest.json",
   icons: {
-    icon: "/brand/logo/logo-v.svg",
-    apple: "/brand/logo/logo-v.svg",
+    icon: "/brand/logo/logo-sky.svg",
+    apple: "/brand/logo/logo-sky.svg",
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#1F2328",
+  themeColor: "#38BDF8",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,

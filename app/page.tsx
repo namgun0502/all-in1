@@ -89,16 +89,10 @@ export default function SmartLifeCarePage() {
 
   // ── 4. 초기화 및 세션 / PWA 이벤트 감지 ──
   useEffect(() => {
-    // 1) 로그인 세션 확인 및 Supabase 실시간 동기화
-    async function initSession() {
-      const session = await syncCurrentSession();
-      if (session.email) {
-        setCurrentUser(session.email);
-        setCurrentUserId(session.userId);
-        loadUserItems(session.userId);
-      }
-    }
-    initSession();
+    // 1) 자동 로그인 비활성화: 앱 접속 시 항상 로그인/회원가입 화면이 먼저 노출되도록 설정
+    // (남건 요청: 자동 로그인 되지 않고 수동으로 로그인하게 변경)
+    setCurrentUser(null);
+    setCurrentUserId(null);
 
     // 2) Gemini API Key 로드
     const savedKey = localStorage.getItem("zenitree_gemini_key");
@@ -378,11 +372,16 @@ export default function SmartLifeCarePage() {
         });
 
         if (error) {
-          console.warn("Supabase 저장 알림:", error.message);
+          console.error("Supabase 저장 오류:", error.message);
+          alert(`[Supabase 클라우드 저장 안내]\n${error.message}\n\n(참고: Supabase RLS 정책 및 세션을 점검해 주세요)`);
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error("Supabase INSERT 예외:", err);
+        alert(`[Supabase 통신 오류]\n${err?.message || "네트워크 연결을 확인해 주세요."}`);
       }
+    } else {
+      alert("로그인 세션(UUID)을 확인할 수 없습니다. 다시 로그인해 주세요.");
+      return;
     }
 
     setItems([newItem, ...items]);
