@@ -3,10 +3,11 @@
 // ============================================================================
 // 스마트 라이프 소모품 케어 AI 어시스턴트 - 메인 대시보드
 // (app/page.tsx)
-// 제니트리 통합 디자인 시스템(JT Master v3.0) 완벽 적용
+// 제니트리 공식 로고(J⁺) + Google Gemini AI 실시간 API 연동
 // ============================================================================
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import ZenitreeLogo from "./components/ZenitreeLogo";
 import {
   ConsumableItem,
   ItemCategory,
@@ -84,8 +85,20 @@ export default function SmartLifeCarePage() {
   const [items, setItems] = useState<ConsumableItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>("전체");
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState<boolean>(false);
   const [activeDetailItem, setActiveDetailItem] = useState<ConsumableItem | null>(null);
   const [showJsonRaw, setShowJsonRaw] = useState<boolean>(false);
+
+  // Gemini API Key 및 실시간 분석 로딩
+  const [geminiApiKey, setGeminiApiKey] = useState<string>("");
+  const [tempApiKey, setTempApiKey] = useState<string>("");
+  const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
+
+  // 이미지 첨부 관련 상태
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageBase64, setImageBase64] = useState<string | null>(null);
+  const [imageMimeType, setImageMimeType] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 신규 등록 폼 상태
   const [formData, setFormData] = useState({
@@ -106,6 +119,13 @@ export default function SmartLifeCarePage() {
       } else {
         setItems(INITIAL_ITEMS);
       }
+
+      // API 키 불러오기
+      const savedKey = localStorage.getItem("zenitree_gemini_key");
+      if (savedKey) {
+        setGeminiApiKey(savedKey);
+        setTempApiKey(savedKey);
+      }
     } catch {
       setItems(INITIAL_ITEMS);
     }
@@ -120,7 +140,48 @@ export default function SmartLifeCarePage() {
     }
   };
 
-  // ── 3. 필터링 및 통계 계산 ──
+  const handleSaveApiKey = () => {
+    const trimmed = tempApiKey.trim();
+    setGeminiApiKey(trimmed);
+    localStorage.setItem("zenitree_gemini_key", trimmed);
+    setIsApiKeyModalOpen(false);
+    alert(trimmed ? "Google Gemini API 키가 성공적으로 저장되었습니다." : "API 키가 삭제되었습니다. (로컬 엔진 모드로 동작)");
+  };
+
+  // ── 3. 이미지 파일 업로드 처리 ──
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 4 * 1024 * 1024) {
+      alert("이미지 크기는 최대 4MB까지 지원됩니다.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      setImagePreview(result);
+      // data:image/png;base64,... 에서 Base64 본문만 추출
+      const commaIndex = result.indexOf(",");
+      if (commaIndex !== -1) {
+        setImageBase64(result.slice(commaIndex + 1));
+        setImageMimeType(file.type || "image/jpeg");
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleClearImage = () => {
+    setImagePreview(null);
+    setImageBase64(null);
+    setImageMimeType(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  // ── 4. 필터링 및 통계 계산 ──
   const filteredItems = items.filter((item) => {
     if (selectedCategory === "전체") return true;
     return item.category === selectedCategory;
@@ -131,23 +192,72 @@ export default function SmartLifeCarePage() {
   const cautionCount = items.filter((i) => i.analysis.replacement_analysis.status === "CAUTION").length;
   const replaceNowCount = items.filter((i) => i.analysis.replacement_analysis.status === "REPLACE_NOW").length;
 
-  // ── 4. 핸들러: 소모품 신규 등록 ──
-  const handleAddItem = (e: React.FormEvent) => {
+  // ── 5. 핸들러: 소모품 신규 등록 (실제 Gemini API 호출) ──
+  const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.itemName.trim()) {
       alert("소모품명을 입력해주세요.");
       return;
     }
 
-    // AI 분석 엔진 가동
-    const analysis = analyzeConsumableItem({
-      category: formData.category,
-      brand: formData.brand,
-      itemName: formData.itemName,
-      installedDate: formData.installedDate,
-      currentUsage: Number(formData.currentUsage) || 0,
-      condition: formData.condition,
-    });
+    setIsAiLoading(true);
+    let finalAnalysis: CareAnalysisResult;
+
+    // 실제 Gemini API 호출 시도
+    if (geminiApiKey) {
+      try {
+        const res = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            apiKey: geminiApiKey,
+            brand: formData.brand,
+            category: formData.category,
+            itemName: formData.itemName,
+            installedDate: formData.installedDate,
+            currentUsage: Number(formData.currentUsage) || 0,
+            condition: formData.condition,
+            imageBase64: imageBase64,
+            imageMimeType: imageMimeType,
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          finalAnalysis = data.analysis;
+        } else {
+          console.warn("Gemini API 호출 실패, 로컬 공식 DB로 폴백합니다.");
+          finalAnalysis = analyzeConsumableItem({
+            category: formData.category,
+            brand: formData.brand,
+            itemName: formData.itemName,
+            installedDate: formData.installedDate,
+            currentUsage: Number(formData.currentUsage) || 0,
+            condition: formData.condition,
+          });
+        }
+      } catch (apiErr) {
+        console.error("API 통신 오류", apiErr);
+        finalAnalysis = analyzeConsumableItem({
+          category: formData.category,
+          brand: formData.brand,
+          itemName: formData.itemName,
+          installedDate: formData.installedDate,
+          currentUsage: Number(formData.currentUsage) || 0,
+          condition: formData.condition,
+        });
+      }
+    } else {
+      // 로컬 공식 DB 엔진 사용
+      finalAnalysis = analyzeConsumableItem({
+        category: formData.category,
+        brand: formData.brand,
+        itemName: formData.itemName,
+        installedDate: formData.installedDate,
+        currentUsage: Number(formData.currentUsage) || 0,
+        condition: formData.condition,
+      });
+    }
 
     const newItem: ConsumableItem = {
       id: "item-" + Date.now(),
@@ -158,13 +268,15 @@ export default function SmartLifeCarePage() {
       condition: formData.condition,
       currentUsage: Number(formData.currentUsage) || 0,
       usageUnit: formData.category === "차량" ? "km" : "개월",
-      analysis: analysis,
+      analysis: finalAnalysis,
       createdAt: new Date().toISOString(),
     };
 
     const updated = [newItem, ...items];
     saveItems(updated);
+    setIsAiLoading(false);
     setIsModalOpen(false);
+    handleClearImage();
 
     // 폼 초기화
     setFormData({
@@ -177,7 +289,7 @@ export default function SmartLifeCarePage() {
     });
   };
 
-  // ── 5. 핸들러: 교체 완료 (수명 100% 리셋) ──
+  // ── 6. 핸들러: 교체 완료 (수명 100% 리셋) ──
   const handleResetItem = (id: string) => {
     const target = items.find((i) => i.id === id);
     if (!target) return;
@@ -219,7 +331,7 @@ export default function SmartLifeCarePage() {
     }
   };
 
-  // ── 6. 핸들러: 삭제 ──
+  // ── 7. 핸들러: 삭제 ──
   const handleDeleteItem = (id: string, name: string) => {
     if (!confirm(`'${name}' 소모품을 목록에서 삭제하시겠습니까?`)) {
       return;
@@ -246,7 +358,7 @@ export default function SmartLifeCarePage() {
           backgroundColor: "#1F2328",
           color: "#FFFFFF",
           borderBottom: "1px solid #33383F",
-          padding: "16px 24px",
+          padding: "14px 24px",
         }}
       >
         <div
@@ -257,59 +369,60 @@ export default function SmartLifeCarePage() {
             alignItems: "center",
             justifyContent: "space-between",
             flexWrap: "wrap",
-            gap: "12px",
+            gap: "14px",
           }}
         >
-          {/* 브랜드 타이틀 */}
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          {/* 제니트리 공식 로고 (J⁺ 심볼 및 워드마크) */}
+          <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+            <ZenitreeLogo height={32} theme="dark" variant="horizontal" />
             <div
               style={{
-                width: "36px",
-                height: "36px",
-                borderRadius: "8px",
-                backgroundColor: "#305CDE",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontWeight: "900",
-                fontSize: "18px",
-                color: "#FFFFFF",
+                width: "1px",
+                height: "24px",
+                backgroundColor: "#374151",
+                margin: "0 4px",
               }}
-            >
-              JT
-            </div>
-            <div>
-              <div style={{ fontSize: "16px", fontWeight: "700", letterSpacing: "-0.02em" }}>
-                스마트 라이프 소모품 케어 AI
-              </div>
-              <div style={{ fontSize: "12px", color: "#9CA3AF" }}>
-                제니트리 통합 디자인 시스템 v3.0 · 회사별 맞춤 공식 주기 케어
-              </div>
+            />
+            <div style={{ fontSize: "12px", color: "#9CA3AF" }}>
+              AI 소모품 수명 케어 시스템
             </div>
           </div>
 
-          {/* 우측 배지 및 액션 */}
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <div
+          {/* 우측 배지 및 Gemini API 액션 */}
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+            {/* Gemini API 상태 버튼 */}
+            <button
+              onClick={() => setIsApiKeyModalOpen(true)}
               style={{
                 fontSize: "12px",
-                backgroundColor: "#2B313A",
-                color: "#14A870",
-                padding: "4px 10px",
-                borderRadius: "4px",
+                backgroundColor: geminiApiKey ? "#163828" : "#2B313A",
+                color: geminiApiKey ? "#34D399" : "#D1D5DB",
+                border: geminiApiKey ? "1px solid #059669" : "1px solid #4B5563",
+                padding: "5px 10px",
+                borderRadius: "6px",
                 fontWeight: "600",
                 display: "flex",
                 alignItems: "center",
                 gap: "6px",
+                cursor: "pointer",
               }}
             >
-              <span style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: "#14A870" }} />
-              Cloudflare Pages Ready
-            </div>
+              <span
+                style={{
+                  width: "7px",
+                  height: "7px",
+                  borderRadius: "50%",
+                  backgroundColor: geminiApiKey ? "#10B981" : "#9CA3AF",
+                }}
+              />
+              {geminiApiKey ? "Gemini AI 연동됨" : "🔑 Gemini API 설정"}
+            </button>
+
+            {/* 신규 등록 버튼 */}
             <button
               onClick={() => setIsModalOpen(true)}
               className="jt-btn-accent"
-              style={{ padding: "8px 16px", fontSize: "13px" }}
+              style={{ padding: "7px 14px", fontSize: "13px" }}
             >
               + 소모품 등록 & AI 분석
             </button>
@@ -606,7 +719,115 @@ export default function SmartLifeCarePage() {
         )}
       </main>
 
-      {/* ── 4. AI 진단 상세 모달 (JSON 스키마 결과 뷰어) ── */}
+      {/* ── 4. Gemini API Key 설정 모달 ── */}
+      {isApiKeyModalOpen && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+            zIndex: 110,
+          }}
+          onClick={() => setIsApiKeyModalOpen(false)}
+        >
+          <div
+            className="jt-card"
+            style={{
+              maxWidth: "500px",
+              width: "100%",
+              padding: "28px",
+              backgroundColor: "#FFFFFF",
+              position: "relative",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setIsApiKeyModalOpen(false)}
+              style={{
+                position: "absolute",
+                top: "20px",
+                right: "20px",
+                border: "none",
+                background: "transparent",
+                fontSize: "20px",
+                cursor: "pointer",
+                color: "#6B7280",
+              }}
+            >
+              ✕
+            </button>
+
+            <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#1F2328", marginBottom: "8px" }}>
+              🔑 Google Gemini AI API 설정
+            </h3>
+            <p style={{ fontSize: "13px", color: "#6B7280", lineHeight: "1.6", marginBottom: "16px" }}>
+              실제 Google Gemini 모델을 통해 제품 라벨 이미지 인식과 실시간 수명 분석을 진행하려면 API 키를 입력해 주세요. (키가 없으면 내장된 공식 매뉴얼 데이터베이스로 안전하게 분석됩니다)
+            </p>
+
+            <div style={{ marginBottom: "16px" }}>
+              <label style={{ display: "block", fontSize: "13px", fontWeight: "600", marginBottom: "6px" }}>
+                Gemini API Key
+              </label>
+              <input
+                type="password"
+                className="jt-input font-num"
+                placeholder="AIzaSy..."
+                value={tempApiKey}
+                onChange={(e) => setTempApiKey(e.target.value)}
+              />
+            </div>
+
+            <div
+              style={{
+                backgroundColor: "#F9FAFB",
+                padding: "12px",
+                borderRadius: "6px",
+                fontSize: "12px",
+                color: "#4B5563",
+                marginBottom: "20px",
+              }}
+            >
+              💡 Google AI Studio(
+              <a
+                href="https://aistudio.google.com/app/apikey"
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: "#305CDE", textDecoration: "underline" }}
+              >
+                aistudio.google.com
+              </a>
+              )에서 무료로 API 키를 즉시 발급받으실 수 있습니다. 입력된 키는 브라우저 로컬 저장소에만 안전하게 보관됩니다.
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setTempApiKey("");
+                  setGeminiApiKey("");
+                  localStorage.removeItem("zenitree_gemini_key");
+                  setIsApiKeyModalOpen(false);
+                }}
+                className="jt-btn-secondary"
+              >
+                키 초기화
+              </button>
+              <button type="button" onClick={handleSaveApiKey} className="jt-btn-primary">
+                설정 저장
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 5. AI 진단 상세 모달 (JSON 스키마 결과 뷰어) ── */}
       {activeDetailItem && (
         <div
           style={{
@@ -637,7 +858,6 @@ export default function SmartLifeCarePage() {
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* 닫기 버튼 */}
             <button
               onClick={() => setActiveDetailItem(null)}
               style={{
@@ -750,7 +970,7 @@ export default function SmartLifeCarePage() {
         </div>
       )}
 
-      {/* ── 5. 신규 소모품 등록 & AI 분석 모달 ── */}
+      {/* ── 6. 신규 소모품 등록 & AI 분석 모달 ── */}
       {isModalOpen && (
         <div
           style={{
@@ -766,13 +986,15 @@ export default function SmartLifeCarePage() {
             padding: "20px",
             zIndex: 100,
           }}
-          onClick={() => setIsModalOpen(false)}
+          onClick={() => !isAiLoading && setIsModalOpen(false)}
         >
           <div
             className="jt-card"
             style={{
-              maxWidth: "540px",
+              maxWidth: "560px",
               width: "100%",
+              maxHeight: "92vh",
+              overflowY: "auto",
               padding: "28px",
               backgroundColor: "#FFFFFF",
               position: "relative",
@@ -780,7 +1002,8 @@ export default function SmartLifeCarePage() {
             onClick={(e) => e.stopPropagation()}
           >
             <button
-              onClick={() => setIsModalOpen(false)}
+              onClick={() => !isAiLoading && setIsModalOpen(false)}
+              disabled={isAiLoading}
               style={{
                 position: "absolute",
                 top: "20px",
@@ -796,13 +1019,82 @@ export default function SmartLifeCarePage() {
             </button>
 
             <h2 style={{ fontSize: "18px", fontWeight: "800", color: "#1F2328", marginBottom: "6px" }}>
-              소모품 등록 & AI 수명 분석
+              소모품 등록 & Gemini AI 분석
             </h2>
-            <p style={{ fontSize: "13px", color: "#6B7280", marginBottom: "20px" }}>
-              제조사(회사)와 사용 정보를 입력하시면 최적의 교체 주기와 위험 요소를 자동 계산합니다.
+            <p style={{ fontSize: "13px", color: "#6B7280", marginBottom: "18px" }}>
+              {geminiApiKey
+                ? "✨ Google Gemini AI가 실시간으로 분석합니다. 라벨 사진을 올리시면 더욱 정확합니다."
+                : "제조사 공식 매뉴얼 DB를 기반으로 최적의 교체 주기와 위험 요소를 자동 계산합니다."}
             </p>
 
             <form onSubmit={handleAddItem}>
+              {/* 이미지 사진 첨부 영역 */}
+              <div
+                style={{
+                  border: "2px dashed #D1D5DB",
+                  borderRadius: "8px",
+                  padding: "16px",
+                  textAlign: "center",
+                  backgroundColor: "#F9FAFB",
+                  marginBottom: "16px",
+                }}
+              >
+                {imagePreview ? (
+                  <div>
+                    <img
+                      src={imagePreview}
+                      alt="제품 라벨 미리보기"
+                      style={{
+                        maxHeight: "140px",
+                        margin: "0 auto 10px",
+                        borderRadius: "6px",
+                        display: "block",
+                        objectFit: "contain",
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleClearImage}
+                      style={{
+                        fontSize: "12px",
+                        color: "#DC2626",
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        fontWeight: "600",
+                      }}
+                    >
+                      사진 삭제
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ fontSize: "24px", marginBottom: "4px" }}>📷</div>
+                    <div style={{ fontSize: "13px", fontWeight: "600", color: "#374151" }}>
+                      제품 라벨 / 계기판 / 영수증 사진 첨부
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#6B7280", marginTop: "2px", marginBottom: "8px" }}>
+                      Gemini Vision AI가 이미지 속 텍스트와 모델명을 자동으로 판별합니다
+                    </div>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageChange}
+                      style={{ display: "none" }}
+                      id="label-image-upload"
+                    />
+                    <label
+                      htmlFor="label-image-upload"
+                      className="jt-btn-secondary"
+                      style={{ display: "inline-block", fontSize: "12px", padding: "6px 12px" }}
+                    >
+                      사진 선택하기
+                    </label>
+                  </div>
+                )}
+              </div>
+
               {/* 카테고리 선택 */}
               <div style={{ marginBottom: "14px" }}>
                 <label style={{ display: "block", fontSize: "13px", fontWeight: "600", marginBottom: "6px" }}>
@@ -955,7 +1247,7 @@ export default function SmartLifeCarePage() {
                       checked={formData.condition === "normal"}
                       onChange={() => setFormData({ ...formData, condition: "normal" })}
                     />
-                    일반 조건 (표준 주행/사용)
+                    일반 조건 (표준)
                   </label>
 
                   <label
@@ -978,18 +1270,28 @@ export default function SmartLifeCarePage() {
                       checked={formData.condition === "harsh"}
                       onChange={() => setFormData({ ...formData, condition: "harsh" })}
                     />
-                    가혹 조건 (단거리/먼지/정체)
+                    가혹 조건 (단거리/정체/먼지)
                   </label>
                 </div>
               </div>
 
-              {/* 하단 버튼 */}
+              {/* 하단 버튼 및 로딩 표시 */}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
-                <button type="button" onClick={() => setIsModalOpen(false)} className="jt-btn-secondary">
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="jt-btn-secondary"
+                  disabled={isAiLoading}
+                >
                   취소
                 </button>
-                <button type="submit" className="jt-btn-primary">
-                  AI 수명 분석 및 등록
+                <button
+                  type="submit"
+                  className="jt-btn-primary"
+                  disabled={isAiLoading}
+                  style={{ minWidth: "140px" }}
+                >
+                  {isAiLoading ? "AI 정밀 분석 중..." : "AI 수명 분석 및 등록"}
                 </button>
               </div>
             </form>
