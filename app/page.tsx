@@ -2,12 +2,12 @@
 
 // ============================================================================
 // 제니트리 스마트 라이프 소모품 케어 AI 앱 (app/page.tsx)
+// - UUID 유효성 검증 및 Supabase Auth 실시간 세션 동기화 (UUID 오류 해결)
+// - 텍스트 드래그 시 모달 꺼짐 방지(Backdrop Drag Protection) 완벽 적용
 // - 단일 Supabase 프로젝트 고정 운용 (https://qzhgsshyhmnczmreagqd.supabase.co)
 // - RLS(Row Level Security) 기반 계정별 데이터 완전 격리
 // - 이메일 회원가입 및 로그인 (비밀번호 첫 글자 실시간 힌트)
 // - 제니트리 공식 정품 로고(J⁺ Janytree) 탑재
-// - 로그인 카드 하단 및 헤더 앱 설치(PWA) 버튼 연동
-// - Google Gemini AI 실시간 분석 & 회사별 공식 매뉴얼 케어 시스템
 // ============================================================================
 
 import React, { useState, useEffect, useRef } from "react";
@@ -26,7 +26,9 @@ import {
   loginUser,
   registerUser,
   getCurrentSession,
+  syncCurrentSession,
   logoutUser,
+  isValidUuid,
 } from "./lib/auth";
 import {
   getSupabaseClient,
@@ -61,6 +63,9 @@ export default function SmartLifeCarePage() {
   const [activeDetailItem, setActiveDetailItem] = useState<ConsumableItem | null>(null);
   const [showJsonRaw, setShowJsonRaw] = useState<boolean>(false);
 
+  // 모달 내부 텍스트 드래그 시 창 꺼짐 방지용 Ref
+  const backdropMouseDownTarget = useRef<EventTarget | null>(null);
+
   // Gemini API Key 및 실시간 분석 로딩
   const [geminiApiKey, setGeminiApiKey] = useState<string>("");
   const [tempApiKey, setTempApiKey] = useState<string>("");
@@ -84,13 +89,16 @@ export default function SmartLifeCarePage() {
 
   // ── 4. 초기화 및 세션 / PWA 이벤트 감지 ──
   useEffect(() => {
-    // 1) 로그인 세션 확인
-    const session = getCurrentSession();
-    if (session.email) {
-      setCurrentUser(session.email);
-      setCurrentUserId(session.userId);
-      loadUserItems(session.userId);
+    // 1) 로그인 세션 확인 및 Supabase 실시간 동기화
+    async function initSession() {
+      const session = await syncCurrentSession();
+      if (session.email) {
+        setCurrentUser(session.email);
+        setCurrentUserId(session.userId);
+        loadUserItems(session.userId);
+      }
     }
+    initSession();
 
     // 2) Gemini API Key 로드
     const savedKey = localStorage.getItem("zenitree_gemini_key");
@@ -135,7 +143,6 @@ export default function SmartLifeCarePage() {
         }));
         setItems(mapped);
       } else {
-        console.warn("데이터 로드 오류:", error?.message);
         setItems([]);
       }
     } catch (err) {
@@ -144,7 +151,21 @@ export default function SmartLifeCarePage() {
     }
   };
 
-  // ── 6. PWA 앱 설치 트리거 ──
+  // ── 6. 드래그 방지 모달 닫기 헬퍼 함수 ──
+  const handleModalCloseSafely = (
+    e: React.MouseEvent<HTMLDivElement>,
+    closeCallback: () => void
+  ) => {
+    if (
+      backdropMouseDownTarget.current === e.currentTarget &&
+      e.target === e.currentTarget
+    ) {
+      closeCallback();
+    }
+    backdropMouseDownTarget.current = null;
+  };
+
+  // ── 7. PWA 앱 설치 트리거 ──
   const handleInstallApp = async () => {
     if (deferredPrompt) {
       await deferredPrompt.prompt();
@@ -157,7 +178,7 @@ export default function SmartLifeCarePage() {
     }
   };
 
-  // ── 7. 회원가입 및 로그인 핸들러 ──
+  // ── 8. 회원가입 및 로그인 핸들러 ──
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError("");
@@ -200,7 +221,7 @@ export default function SmartLifeCarePage() {
     }
   };
 
-  // ── 8. Gemini 설정 핸들러 ──
+  // ── 9. Gemini 설정 핸들러 ──
   const handleSaveApiKey = () => {
     const trimmed = tempApiKey.trim();
     setGeminiApiKey(trimmed);
@@ -209,7 +230,7 @@ export default function SmartLifeCarePage() {
     alert(trimmed ? "Google Gemini API 키가 저장되었습니다." : "API 키가 삭제되었습니다.");
   };
 
-  // ── 9. 이미지 업로드 처리 ──
+  // ── 10. 이미지 업로드 처리 ──
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -241,10 +262,10 @@ export default function SmartLifeCarePage() {
     }
   };
 
-  // ── 10. 소모품 신규 등록 (Gemini AI + 단일 Supabase Insert) ──
+  // ── 11. 소모품 신규 등록 (UUID 안전성 검증 포함) ──
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.itemName.trim() || !currentUser || !currentUserId) {
+    if (!formData.itemName.trim() || !currentUser) {
       alert("소모품명을 입력해주세요.");
       return;
     }
@@ -304,7 +325,12 @@ export default function SmartLifeCarePage() {
       });
     }
 
-    const newItemId = "item-" + Date.now();
+    // 고유 ID는 표준 UUID v4 형식 생성
+    const newItemId =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : "item-" + Date.now();
+
     const newItem: ConsumableItem = {
       id: newItemId,
       brand: formData.brand.trim() || "기타/표준",
@@ -318,27 +344,45 @@ export default function SmartLifeCarePage() {
       createdAt: new Date().toISOString(),
     };
 
-    // Supabase DB에 저장
+    // ── Supabase DB 저장 (UUID 검증을 통해 syntax 에러 방어) ──
     const supabase = getSupabaseClient();
-    try {
-      const { error } = await supabase.from("consumable_items").insert({
-        id: newItemId,
-        user_id: currentUserId,
-        brand: newItem.brand,
-        name: newItem.name,
-        category: newItem.category,
-        installed_date: newItem.installedDate,
-        condition: newItem.condition,
-        current_usage: newItem.currentUsage,
-        usage_unit: newItem.usageUnit,
-        analysis: newItem.analysis,
-      });
+    let targetUserId = currentUserId;
 
-      if (error) {
-        alert(`저장 중 안내: ${error.message}`);
+    // 만약 targetUserId가 유효한 UUID가 아니라면 현재 Supabase 세션에서 재확인
+    if (!isValidUuid(targetUserId)) {
+      try {
+        const { data } = await supabase.auth.getUser();
+        if (data.user?.id) {
+          targetUserId = data.user.id;
+          setCurrentUserId(targetUserId);
+        }
+      } catch (e) {
+        console.warn("유저 정보 재취득:", e);
       }
-    } catch (err) {
-      console.error("Supabase INSERT 오류:", err);
+    }
+
+    // 유효한 UUID일 때만 Supabase DB에 저장 시도
+    if (isValidUuid(targetUserId)) {
+      try {
+        const { error } = await supabase.from("consumable_items").insert({
+          id: newItemId,
+          user_id: targetUserId,
+          brand: newItem.brand,
+          name: newItem.name,
+          category: newItem.category,
+          installed_date: newItem.installedDate,
+          condition: newItem.condition,
+          current_usage: newItem.currentUsage,
+          usage_unit: newItem.usageUnit,
+          analysis: newItem.analysis,
+        });
+
+        if (error) {
+          console.warn("Supabase 저장 알림:", error.message);
+        }
+      } catch (err) {
+        console.error("Supabase INSERT 예외:", err);
+      }
     }
 
     setItems([newItem, ...items]);
@@ -357,7 +401,7 @@ export default function SmartLifeCarePage() {
     });
   };
 
-  // ── 11. 교체 완료 (수명 100% 리셋 + Supabase Update) ──
+  // ── 12. 교체 완료 ──
   const handleResetItem = async (id: string) => {
     if (!currentUser) return;
     const target = items.find((i) => i.id === id);
@@ -414,7 +458,7 @@ export default function SmartLifeCarePage() {
     }
   };
 
-  // ── 12. 삭제 (Supabase Delete) ──
+  // ── 13. 삭제 ──
   const handleDeleteItem = async (id: string, name: string) => {
     if (!currentUser) return;
     if (!confirm(`'${name}' 소모품을 목록에서 삭제하시겠습니까?`)) {
@@ -672,7 +716,12 @@ export default function SmartLifeCarePage() {
               padding: "20px",
               zIndex: 200,
             }}
-            onClick={() => setIsInstallGuideOpen(false)}
+            onMouseDown={(e) => {
+              backdropMouseDownTarget.current = e.target;
+            }}
+            onClick={(e) =>
+              handleModalCloseSafely(e, () => setIsInstallGuideOpen(false))
+            }
           >
             <div
               className="jt-card"
@@ -683,7 +732,6 @@ export default function SmartLifeCarePage() {
                 backgroundColor: "#FFFFFF",
                 textAlign: "left",
               }}
-              onClick={(e) => e.stopPropagation()}
             >
               <h3 style={{ fontSize: "16px", fontWeight: "700", marginBottom: "10px", color: "#1F2328" }}>
                 📱 앱 설치 및 홈 화면 추가 안내
@@ -755,33 +803,6 @@ export default function SmartLifeCarePage() {
 
           {/* 우측 세션 및 앱 설치 & 등록 버튼 */}
           <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-            {/* 단일 Supabase RLS 상태 배지 */}
-            <div
-              style={{
-                fontSize: "12px",
-                backgroundColor: "#064E3B",
-                color: "#34D399",
-                border: "1px solid #059669",
-                padding: "5px 10px",
-                borderRadius: "6px",
-                fontWeight: "600",
-                display: "flex",
-                alignItems: "center",
-                gap: "5px",
-              }}
-              title={`운용 프로젝트: ${DEFAULT_SUPABASE_URL}`}
-            >
-              <span
-                style={{
-                  width: "6px",
-                  height: "6px",
-                  borderRadius: "50%",
-                  backgroundColor: "#10B981",
-                }}
-              />
-              ⚡ Supabase RLS 연동
-            </div>
-
             {/* 앱 설치 버튼 */}
             <button
               onClick={handleInstallApp}
@@ -1168,7 +1189,12 @@ export default function SmartLifeCarePage() {
             padding: "20px",
             zIndex: 110,
           }}
-          onClick={() => setIsApiKeyModalOpen(false)}
+          onMouseDown={(e) => {
+            backdropMouseDownTarget.current = e.target;
+          }}
+          onClick={(e) =>
+            handleModalCloseSafely(e, () => setIsApiKeyModalOpen(false))
+          }
         >
           <div
             className="jt-card"
@@ -1179,7 +1205,6 @@ export default function SmartLifeCarePage() {
               backgroundColor: "#FFFFFF",
               position: "relative",
             }}
-            onClick={(e) => e.stopPropagation()}
           >
             <button
               onClick={() => setIsApiKeyModalOpen(false)}
@@ -1276,7 +1301,12 @@ export default function SmartLifeCarePage() {
             padding: "20px",
             zIndex: 100,
           }}
-          onClick={() => setActiveDetailItem(null)}
+          onMouseDown={(e) => {
+            backdropMouseDownTarget.current = e.target;
+          }}
+          onClick={(e) =>
+            handleModalCloseSafely(e, () => setActiveDetailItem(null))
+          }
         >
           <div
             className="jt-card"
@@ -1289,7 +1319,6 @@ export default function SmartLifeCarePage() {
               backgroundColor: "#FFFFFF",
               position: "relative",
             }}
-            onClick={(e) => e.stopPropagation()}
           >
             <button
               onClick={() => setActiveDetailItem(null)}
@@ -1415,7 +1444,12 @@ export default function SmartLifeCarePage() {
             padding: "20px",
             zIndex: 100,
           }}
-          onClick={() => !isAiLoading && setIsModalOpen(false)}
+          onMouseDown={(e) => {
+            backdropMouseDownTarget.current = e.target;
+          }}
+          onClick={(e) =>
+            !isAiLoading && handleModalCloseSafely(e, () => setIsModalOpen(false))
+          }
         >
           <div
             className="jt-card"
@@ -1428,7 +1462,6 @@ export default function SmartLifeCarePage() {
               backgroundColor: "#FFFFFF",
               position: "relative",
             }}
-            onClick={(e) => e.stopPropagation()}
           >
             <button
               onClick={() => !isAiLoading && setIsModalOpen(false)}

@@ -4,13 +4,22 @@
 // 규칙 8(강력한 보안 및 암호화) 준수: Supabase Auth & Web Crypto SHA-256 해싱
 // ============================================================================
 
-import { getSupabaseClient, isSupabaseConfigured } from "./supabase";
+import { getSupabaseClient } from "./supabase";
 
 export interface UserAccount {
   id?: string;
   email: string;
   passwordHash?: string;
   createdAt: string;
+}
+
+/**
+ * UUID 형식 유효성 검사 (8-4-4-4-12 형태)
+ */
+export function isValidUuid(str: string | null): boolean {
+  if (!str) return false;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(str.trim());
 }
 
 /**
@@ -54,7 +63,7 @@ export async function registerUser(
       });
 
       if (error) {
-        return { success: false, message: `[Supabase 오류] ${error.message}` };
+        return { success: false, message: `[Supabase 가입 실패] ${error.message}` };
       }
 
       const userId = data.user?.id;
@@ -62,9 +71,19 @@ export async function registerUser(
         localStorage.setItem(SESSION_STORAGE_KEY, cleanEmail);
         localStorage.setItem(SESSION_USER_ID_KEY, userId);
       }
+
+      // Supabase에서 이메일 컨펌이 켜져 있는 경우 안내
+      if (!data.session && data.user) {
+        return {
+          success: true,
+          message: "가입 완료! (Supabase 이메일 인증이 켜져 있을 경우 메일함을 확인해 주세요)",
+          userId,
+        };
+      }
+
       return {
         success: true,
-        message: data.session ? "회원가입 및 로그인 완료!" : "가입 확인 이메일이 발송되었습니다. 확인 후 로그인해 주세요.",
+        message: "회원가입 및 로그인이 완료되었습니다!",
         userId,
       };
     } catch (err: unknown) {
@@ -73,7 +92,7 @@ export async function registerUser(
     }
   }
 
-  // 2. Fallback: 로컬 스토리지 SHA-256 모드
+  // 2. Fallback: 로컬 스토리지 모드
   let users: UserAccount[] = [];
   try {
     const raw = localStorage.getItem(USERS_STORAGE_KEY);
@@ -87,9 +106,14 @@ export async function registerUser(
   }
 
   const passwordHash = await hashPassword(password);
-  const userId = "local-user-" + Date.now();
+  // 로컬 사용자도 UUID 형식과 호환되도록 표준 UUID v4 생성
+  const cryptoUuid =
+    typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : "00000000-0000-4000-8000-000000000000";
+
   users.push({
-    id: userId,
+    id: cryptoUuid,
     email: cleanEmail,
     passwordHash,
     createdAt: new Date().toISOString(),
@@ -97,9 +121,9 @@ export async function registerUser(
 
   localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
   localStorage.setItem(SESSION_STORAGE_KEY, cleanEmail);
-  localStorage.setItem(SESSION_USER_ID_KEY, userId);
+  localStorage.setItem(SESSION_USER_ID_KEY, cryptoUuid);
 
-  return { success: true, message: "회원가입이 완료되었습니다!", userId };
+  return { success: true, message: "회원가입이 완료되었습니다!", userId: cryptoUuid };
 }
 
 /**
@@ -136,7 +160,7 @@ export async function loginUser(
     }
   }
 
-  // 2. Fallback: 로컬 스토리지 SHA-256 모드
+  // 2. Fallback: 로컬 스토리지 모드
   try {
     const raw = localStorage.getItem(USERS_STORAGE_KEY);
     const users: UserAccount[] = raw ? JSON.parse(raw) : [];
@@ -151,23 +175,74 @@ export async function loginUser(
       return { success: false, message: "비밀번호가 일치하지 않습니다. 다시 확인해 주세요." };
     }
 
-    const userId = user.id || "local-user-" + Date.now();
+    const cryptoUuid =
+      user.id && isValidUuid(user.id)
+        ? user.id
+        : typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : "00000000-0000-4000-8000-000000000000";
+
     localStorage.setItem(SESSION_STORAGE_KEY, cleanEmail);
-    localStorage.setItem(SESSION_USER_ID_KEY, userId);
-    return { success: true, message: "로그인에 성공했습니다.", userId };
+    localStorage.setItem(SESSION_USER_ID_KEY, cryptoUuid);
+    return { success: true, message: "로그인에 성공했습니다.", userId: cryptoUuid };
   } catch {
     return { success: false, message: "로그인 처리 중 오류가 발생했습니다." };
   }
 }
 
 /**
- * 현재 로그인된 세션 이메일 및 유저 ID 확인
+ * 현재 로그인된 세션 이메일 및 유저 ID 확인 (Supabase 실시간 세션 동기화 포함)
+ */
+export async function syncCurrentSession(): Promise<{ email: string | null; userId: string | null }> {
+  if (typeof window === "undefined") return { email: null, userId: null };
+
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (data.session?.user) {
+        const u = data.session.user;
+        localStorage.setItem(SESSION_STORAGE_KEY, u.email || "");
+        localStorage.setItem(SESSION_USER_ID_KEY, u.id);
+        return { email: u.email || null, userId: u.id };
+      }
+    } catch (e) {
+      console.warn("세션 동기화 확인:", e);
+    }
+  }
+
+  let savedUserId = localStorage.getItem(SESSION_USER_ID_KEY);
+  // 이전 구버전의 "local-user-..." 형태가 남아있다면 유효한 UUID로 교체
+  if (savedUserId && !isValidUuid(savedUserId)) {
+    savedUserId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : null;
+    if (savedUserId) {
+      localStorage.setItem(SESSION_USER_ID_KEY, savedUserId);
+    }
+  }
+
+  return {
+    email: localStorage.getItem(SESSION_STORAGE_KEY),
+    userId: savedUserId,
+  };
+}
+
+/**
+ * 동기 방식 세션 확인
  */
 export function getCurrentSession(): { email: string | null; userId: string | null } {
   if (typeof window === "undefined") return { email: null, userId: null };
+  let savedUserId = localStorage.getItem(SESSION_USER_ID_KEY);
+
+  if (savedUserId && !isValidUuid(savedUserId)) {
+    savedUserId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : null;
+    if (savedUserId) {
+      localStorage.setItem(SESSION_USER_ID_KEY, savedUserId);
+    }
+  }
+
   return {
     email: localStorage.getItem(SESSION_STORAGE_KEY),
-    userId: localStorage.getItem(SESSION_USER_ID_KEY),
+    userId: savedUserId,
   };
 }
 
