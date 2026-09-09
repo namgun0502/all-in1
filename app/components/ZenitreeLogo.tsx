@@ -1,108 +1,67 @@
 // ============================================================================
-// 제니트리(Janytree) 공식 브랜드 로고 컴포넌트
+// 제니트리(Janytree) 공식 정품 브랜드 로고 컴포넌트
 // (app/components/ZenitreeLogo.tsx)
-// JT 디자인 시스템 Foundation v1.0 §9 브랜드 규격 준수 (심볼 J⁺ 및 워드마크)
+// JT 디자인 시스템 Foundation v1.0 §9 공식 로고 자산(/brand/logo/) 직접 연동
 // ============================================================================
 
 import React from "react";
 
 interface ZenitreeLogoProps {
   /**
-   * 로고 높이 (단위: px, 헤더 기본 권장 28~32px)
+   * 로고 높이 (단위: px, 헤더 기본 권장 28~32px, 로그인 카드 48~60px)
    */
   height?: number;
   /**
-   * 테마 모드: dark(어두운 배경용 흰색), light(밝은 배경용 먹색)
+   * 테마 모드: dark(어두운 배경용 흰색 로고), light(밝은 배경용 먹색 로고)
    */
   theme?: "dark" | "light";
   /**
-   * 심볼(J⁺)만 표시할지, 워드마크(Janytree)까지 함께 표시할지 여부
+   * 로고 형태: h(가로형 - 기본), v(세로형)
    */
-  variant?: "symbol" | "horizontal";
+  variant?: "h" | "v";
+  /**
+   * 추가 클래스명
+   */
+  className?: string;
 }
 
 export default function ZenitreeLogo({
-  height = 28,
+  height = 30,
   theme = "dark",
-  variant = "horizontal",
+  variant = "h",
+  className = "",
 }: ZenitreeLogoProps) {
-  // 테마에 따른 색상 정의 (Charcoal #1F2328 또는 White #FFFFFF)
-  const textColor = theme === "dark" ? "#FFFFFF" : "#1F2328";
-  const plusColor = "#305CDE"; // 제니트리 포인트 블루 (상호작용/강조)
+  // 가이드라인 9-1 파일 명명 규칙 준수
+  // - dark 테마: 어두운 배경이므로 흰색 로고(-light) 사용
+  // - light 테마: 밝은 배경이므로 먹색 로고 사용
+  const logoSrc =
+    variant === "v"
+      ? theme === "dark"
+        ? "/brand/logo/logo-v-light.svg"
+        : "/brand/logo/logo-v.svg"
+      : theme === "dark"
+      ? "/brand/logo/logo-h-light.svg"
+      : "/brand/logo/logo-h.svg";
 
   return (
     <div
+      className={`jt-logo-wrapper ${className}`}
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: "10px",
         userSelect: "none",
-        height: `${height}px`,
       }}
     >
-      {/* ── 1. 공식 심볼 마크 (J⁺) ── */}
-      <svg
-        height={height}
-        viewBox="0 0 36 36"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        style={{ display: "block" }}
-      >
-        {/* 심볼 배경 둥근 사각 배지 */}
-        <rect
-          width="36"
-          height="36"
-          rx="8"
-          fill={theme === "dark" ? "#2B313A" : "#F0F2F5"}
-        />
-
-        {/* 정밀한 'J' 알파벳 획 */}
-        <path
-          d="M19 9V20C19 22.76 16.76 25 14 25C11.24 25 9 22.76 9 20"
-          stroke={textColor}
-          strokeWidth="3.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-
-        {/* 우측 상단 '⁺' 플러스 기호 (R&D 정밀성 상징) */}
-        <path
-          d="M24 10V16M21 13H27"
-          stroke={plusColor}
-          strokeWidth="3"
-          strokeLinecap="round"
-        />
-      </svg>
-
-      {/* ── 2. 공식 워드마크 (Janytree) ── */}
-      {variant === "horizontal" && (
-        <div style={{ display: "flex", flexDirection: "column", justifyContent: "center" }}>
-          <span
-            style={{
-              fontFamily: "'Figtree', 'Pretendard Variable', sans-serif",
-              fontSize: `${Math.round(height * 0.65)}px`,
-              fontWeight: 800,
-              letterSpacing: "-0.03em",
-              color: textColor,
-              lineHeight: 1.1,
-            }}
-          >
-            Janytree
-          </span>
-          <span
-            style={{
-              fontFamily: "'Pretendard Variable', sans-serif",
-              fontSize: `${Math.max(10, Math.round(height * 0.34))}px`,
-              fontWeight: 500,
-              color: theme === "dark" ? "#9CA3AF" : "#6B7280",
-              letterSpacing: "-0.01em",
-              lineHeight: 1,
-            }}
-          >
-            스마트 라이프 케어
-          </span>
-        </div>
-      )}
+      <img
+        src={logoSrc}
+        alt="Janytree 제니트리 공식 로고"
+        style={{
+          height: `${height}px`,
+          width: "auto",
+          display: "block",
+          objectFit: "contain",
+        }}
+      />
     </div>
   );
 }

@@ -1,9 +1,12 @@
 "use client";
 
 // ============================================================================
-// 스마트 라이프 소모품 케어 AI 어시스턴트 - 메인 대시보드
-// (app/page.tsx)
-// 제니트리 공식 로고(J⁺) + Google Gemini AI 실시간 API 연동
+// 제니트리 스마트 라이프 소모품 케어 AI 앱 (app/page.tsx)
+// - 제니트리 공식 정품 로고(J⁺ Janytree) 탑재
+// - Supabase 연동 및 RLS(Row Level Security) 계정별 데이터 완전 격리
+// - 이메일 회원가입 및 로그인 (Supabase Auth & SHA-256 Fallback)
+// - 로그인 카드 하단 및 헤더 앱 설치(PWA) 버튼 연동
+// - Google Gemini AI 실시간 분석 & 회사별 공식 매뉴얼 케어 시스템
 // ============================================================================
 
 import React, { useState, useEffect, useRef } from "react";
@@ -18,11 +21,29 @@ import {
   BRAND_PRESETS,
   analyzeConsumableItem,
 } from "./lib/care-ai";
+import {
+  loginUser,
+  registerUser,
+  getCurrentSession,
+  logoutUser,
+} from "./lib/auth";
+import {
+  getSupabaseClient,
+  isSupabaseConfigured,
+  getSupabaseCredentials,
+  saveSupabaseCredentials,
+} from "./lib/supabase";
 
-// 기본 초기 예시 데이터 (처음 방문 시 제공)
-const INITIAL_ITEMS: ConsumableItem[] = [
+// PWA 설치 프롬프트 인터페이스
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+}
+
+// 신규 가입자용 초기 샘플 데이터
+const DEFAULT_INITIAL_ITEMS: ConsumableItem[] = [
   {
-    id: "demo-1",
+    id: "sample-1",
     brand: "현대/기아",
     name: "아반떼 CN7 엔진오일 및 오일필터",
     category: "차량",
@@ -41,7 +62,7 @@ const INITIAL_ITEMS: ConsumableItem[] = [
     }),
   },
   {
-    id: "demo-2",
+    id: "sample-2",
     brand: "LG전자",
     name: "퓨리케어 공기청정기 일체형 V필터",
     category: "가전",
@@ -60,7 +81,7 @@ const INITIAL_ITEMS: ConsumableItem[] = [
     }),
   },
   {
-    id: "demo-3",
+    id: "sample-3",
     brand: "애플",
     name: "아이폰 15 Pro 내장 배터리",
     category: "IT기기",
@@ -81,11 +102,25 @@ const INITIAL_ITEMS: ConsumableItem[] = [
 ];
 
 export default function SmartLifeCarePage() {
-  // ── 1. 상태(State) 관리 ──
+  // ── 1. 인증(Auth) 상태 ──
+  const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authEmail, setAuthEmail] = useState<string>("");
+  const [authPassword, setAuthPassword] = useState<string>("");
+  const [authError, setAuthError] = useState<string>("");
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(false);
+
+  // ── 2. PWA 앱 설치 이벤트 상태 ──
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isInstallGuideOpen, setIsInstallGuideOpen] = useState<boolean>(false);
+
+  // ── 3. 소모품 목록 및 대시보드 상태 ──
   const [items, setItems] = useState<ConsumableItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>("전체");
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState<boolean>(false);
+  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState<boolean>(false);
   const [activeDetailItem, setActiveDetailItem] = useState<ConsumableItem | null>(null);
   const [showJsonRaw, setShowJsonRaw] = useState<boolean>(false);
 
@@ -93,6 +128,11 @@ export default function SmartLifeCarePage() {
   const [geminiApiKey, setGeminiApiKey] = useState<string>("");
   const [tempApiKey, setTempApiKey] = useState<string>("");
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
+
+  // Supabase 설정 상태
+  const [supabaseConfigured, setSupabaseConfigured] = useState<boolean>(false);
+  const [tempSbUrl, setTempSbUrl] = useState<string>("");
+  const [tempSbKey, setTempSbKey] = useState<string>("");
 
   // 이미지 첨부 관련 상태
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -110,45 +150,176 @@ export default function SmartLifeCarePage() {
     condition: "normal" as UsageCondition,
   });
 
-  // ── 2. 로컬 스토리지 불러오기 및 저장 ──
+  // ── 4. 초기화 및 세션 / PWA 이벤트 감지 ──
   useEffect(() => {
+    // 1) Supabase 설정 상태 확인
+    const isConfig = isSupabaseConfigured();
+    setSupabaseConfigured(isConfig);
+    const creds = getSupabaseCredentials();
+    setTempSbUrl(creds.url);
+    setTempSbKey(creds.anonKey);
+
+    // 2) 로그인 세션 확인
+    const session = getCurrentSession();
+    if (session.email) {
+      setCurrentUser(session.email);
+      setCurrentUserId(session.userId);
+      loadUserItems(session.email, session.userId);
+    }
+
+    // 3) Gemini API Key 로드
+    const savedKey = localStorage.getItem("zenitree_gemini_key");
+    if (savedKey) {
+      setGeminiApiKey(savedKey);
+      setTempApiKey(savedKey);
+    }
+
+    // 4) PWA 설치 이벤트(beforeinstallprompt) 등록
+    const handleBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e as BeforeInstallPromptEvent);
+    };
+    window.addEventListener("beforeinstallprompt", handleBeforeInstall);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
+    };
+  }, []);
+
+  // ── 5. 사용자별 소모품 목록 로드 (Supabase RLS 우선 & 로컬 Fallback) ──
+  const loadUserItems = async (userEmail: string, userId: string | null) => {
+    const supabase = getSupabaseClient();
+
+    // 1) Supabase 연동 시 RLS 쿼리 실행
+    if (supabase && userId) {
+      try {
+        const { data, error } = await supabase
+          .from("consumable_items")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (!error && data) {
+          const mapped: ConsumableItem[] = data.map((row: any) => ({
+            id: row.id,
+            brand: row.brand,
+            name: row.name,
+            category: row.category as ItemCategory,
+            installedDate: row.installed_date,
+            condition: row.condition as UsageCondition,
+            currentUsage: Number(row.current_usage),
+            usageUnit: row.usage_unit as any,
+            analysis: row.analysis,
+            createdAt: row.created_at,
+          }));
+          setItems(mapped);
+          return;
+        }
+      } catch (err) {
+        console.warn("Supabase 데이터 조회 실패, 로컬 저장소로 전환합니다.", err);
+      }
+    }
+
+    // 2) Fallback: 로컬 스토리지 계정별 데이터 격리
     try {
-      const saved = localStorage.getItem("zenitree_care_items");
+      const storageKey = `zenitree_items_${userEmail}`;
+      const saved = localStorage.getItem(storageKey);
       if (saved) {
         setItems(JSON.parse(saved));
       } else {
-        setItems(INITIAL_ITEMS);
-      }
-
-      // API 키 불러오기
-      const savedKey = localStorage.getItem("zenitree_gemini_key");
-      if (savedKey) {
-        setGeminiApiKey(savedKey);
-        setTempApiKey(savedKey);
+        setItems(DEFAULT_INITIAL_ITEMS);
+        localStorage.setItem(storageKey, JSON.stringify(DEFAULT_INITIAL_ITEMS));
       }
     } catch {
-      setItems(INITIAL_ITEMS);
-    }
-  }, []);
-
-  const saveItems = (newItems: ConsumableItem[]) => {
-    setItems(newItems);
-    try {
-      localStorage.setItem("zenitree_care_items", JSON.stringify(newItems));
-    } catch (err) {
-      console.error("저장 실패", err);
+      setItems(DEFAULT_INITIAL_ITEMS);
     }
   };
 
+  // 소모품 데이터 저장
+  const saveUserItems = async (userEmail: string, newItems: ConsumableItem[]) => {
+    setItems(newItems);
+    try {
+      localStorage.setItem(`zenitree_items_${userEmail}`, JSON.stringify(newItems));
+    } catch (err) {
+      console.error("로컬 저장 실패", err);
+    }
+  };
+
+  // ── 6. PWA 앱 설치 트리거 ──
+  const handleInstallApp = async () => {
+    if (deferredPrompt) {
+      await deferredPrompt.prompt();
+      const choice = await deferredPrompt.userChoice;
+      if (choice.outcome === "accepted") {
+        setDeferredPrompt(null);
+      }
+    } else {
+      setIsInstallGuideOpen(true);
+    }
+  };
+
+  // ── 7. 회원가입 및 로그인 핸들러 ──
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError("");
+    setIsAuthLoading(true);
+
+    try {
+      if (authMode === "register") {
+        const res = await registerUser(authEmail, authPassword);
+        if (res.success) {
+          const cleanEmail = authEmail.trim().toLowerCase();
+          setCurrentUser(cleanEmail);
+          setCurrentUserId(res.userId || null);
+          await loadUserItems(cleanEmail, res.userId || null);
+        } else {
+          setAuthError(res.message);
+        }
+      } else {
+        const res = await loginUser(authEmail, authPassword);
+        if (res.success) {
+          const cleanEmail = authEmail.trim().toLowerCase();
+          setCurrentUser(cleanEmail);
+          setCurrentUserId(res.userId || null);
+          await loadUserItems(cleanEmail, res.userId || null);
+        } else {
+          setAuthError(res.message);
+        }
+      }
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (confirm("로그아웃 하시겠습니까?")) {
+      await logoutUser();
+      setCurrentUser(null);
+      setCurrentUserId(null);
+      setAuthPassword("");
+    }
+  };
+
+  // ── 8. Gemini 및 Supabase 설정 핸들러 ──
   const handleSaveApiKey = () => {
     const trimmed = tempApiKey.trim();
     setGeminiApiKey(trimmed);
     localStorage.setItem("zenitree_gemini_key", trimmed);
     setIsApiKeyModalOpen(false);
-    alert(trimmed ? "Google Gemini API 키가 성공적으로 저장되었습니다." : "API 키가 삭제되었습니다. (로컬 엔진 모드로 동작)");
+    alert(trimmed ? "Google Gemini API 키가 저장되었습니다." : "API 키가 삭제되었습니다.");
   };
 
-  // ── 3. 이미지 파일 업로드 처리 ──
+  const handleSaveSupabaseConfig = () => {
+    saveSupabaseCredentials(tempSbUrl, tempSbKey);
+    const isConfig = isSupabaseConfigured();
+    setSupabaseConfigured(isConfig);
+    setIsSupabaseModalOpen(false);
+    alert(isConfig ? "⚡ Supabase 클라우드 데이터베이스와 연결되었습니다!" : "Supabase 연결 정보가 초기화되었습니다.");
+    if (currentUser) {
+      loadUserItems(currentUser, currentUserId);
+    }
+  };
+
+  // ── 9. 이미지 업로드 처리 ──
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -162,7 +333,6 @@ export default function SmartLifeCarePage() {
     reader.onload = () => {
       const result = reader.result as string;
       setImagePreview(result);
-      // data:image/png;base64,... 에서 Base64 본문만 추출
       const commaIndex = result.indexOf(",");
       if (commaIndex !== -1) {
         setImageBase64(result.slice(commaIndex + 1));
@@ -181,21 +351,10 @@ export default function SmartLifeCarePage() {
     }
   };
 
-  // ── 4. 필터링 및 통계 계산 ──
-  const filteredItems = items.filter((item) => {
-    if (selectedCategory === "전체") return true;
-    return item.category === selectedCategory;
-  });
-
-  const totalCount = items.length;
-  const goodCount = items.filter((i) => i.analysis.replacement_analysis.status === "GOOD").length;
-  const cautionCount = items.filter((i) => i.analysis.replacement_analysis.status === "CAUTION").length;
-  const replaceNowCount = items.filter((i) => i.analysis.replacement_analysis.status === "REPLACE_NOW").length;
-
-  // ── 5. 핸들러: 소모품 신규 등록 (실제 Gemini API 호출) ──
+  // ── 10. 소모품 신규 등록 (Gemini AI + Supabase RLS Insert) ──
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.itemName.trim()) {
+    if (!formData.itemName.trim() || !currentUser) {
       alert("소모품명을 입력해주세요.");
       return;
     }
@@ -203,7 +362,6 @@ export default function SmartLifeCarePage() {
     setIsAiLoading(true);
     let finalAnalysis: CareAnalysisResult;
 
-    // 실제 Gemini API 호출 시도
     if (geminiApiKey) {
       try {
         const res = await fetch("/api/analyze", {
@@ -226,7 +384,6 @@ export default function SmartLifeCarePage() {
           const data = await res.json();
           finalAnalysis = data.analysis;
         } else {
-          console.warn("Gemini API 호출 실패, 로컬 공식 DB로 폴백합니다.");
           finalAnalysis = analyzeConsumableItem({
             category: formData.category,
             brand: formData.brand,
@@ -236,8 +393,7 @@ export default function SmartLifeCarePage() {
             condition: formData.condition,
           });
         }
-      } catch (apiErr) {
-        console.error("API 통신 오류", apiErr);
+      } catch {
         finalAnalysis = analyzeConsumableItem({
           category: formData.category,
           brand: formData.brand,
@@ -248,7 +404,6 @@ export default function SmartLifeCarePage() {
         });
       }
     } else {
-      // 로컬 공식 DB 엔진 사용
       finalAnalysis = analyzeConsumableItem({
         category: formData.category,
         brand: formData.brand,
@@ -259,8 +414,9 @@ export default function SmartLifeCarePage() {
       });
     }
 
+    const newItemId = "item-" + Date.now();
     const newItem: ConsumableItem = {
-      id: "item-" + Date.now(),
+      id: newItemId,
       brand: formData.brand.trim() || "기타/표준",
       name: formData.itemName.trim(),
       category: formData.category,
@@ -272,8 +428,29 @@ export default function SmartLifeCarePage() {
       createdAt: new Date().toISOString(),
     };
 
+    // 1) Supabase 연동 시 DB Insert
+    const supabase = getSupabaseClient();
+    if (supabase && currentUserId) {
+      try {
+        await supabase.from("consumable_items").insert({
+          id: newItemId,
+          user_id: currentUserId,
+          brand: newItem.brand,
+          name: newItem.name,
+          category: newItem.category,
+          installed_date: newItem.installedDate,
+          condition: newItem.condition,
+          current_usage: newItem.currentUsage,
+          usage_unit: newItem.usageUnit,
+          analysis: newItem.analysis,
+        });
+      } catch (err) {
+        console.warn("Supabase INSERT 실패, 로컬에 저장합니다.", err);
+      }
+    }
+
     const updated = [newItem, ...items];
-    saveItems(updated);
+    saveUserItems(currentUser, updated);
     setIsAiLoading(false);
     setIsModalOpen(false);
     handleClearImage();
@@ -289,8 +466,9 @@ export default function SmartLifeCarePage() {
     });
   };
 
-  // ── 6. 핸들러: 교체 완료 (수명 100% 리셋) ──
-  const handleResetItem = (id: string) => {
+  // ── 11. 교체 완료 (수명 100% 리셋 + Supabase Update) ──
+  const handleResetItem = async (id: string) => {
+    if (!currentUser) return;
     const target = items.find((i) => i.id === id);
     if (!target) return;
 
@@ -308,6 +486,23 @@ export default function SmartLifeCarePage() {
       condition: target.condition,
     });
 
+    // Supabase DB Update
+    const supabase = getSupabaseClient();
+    if (supabase && currentUserId) {
+      try {
+        await supabase
+          .from("consumable_items")
+          .update({
+            installed_date: todayStr,
+            current_usage: 0,
+            analysis: newAnalysis,
+          })
+          .eq("id", id);
+      } catch (err) {
+        console.warn("Supabase UPDATE 실패", err);
+      }
+    }
+
     const updated = items.map((i) => {
       if (i.id === id) {
         return {
@@ -320,7 +515,7 @@ export default function SmartLifeCarePage() {
       return i;
     });
 
-    saveItems(updated);
+    saveUserItems(currentUser, updated);
     if (activeDetailItem?.id === id) {
       setActiveDetailItem({
         ...target,
@@ -331,25 +526,278 @@ export default function SmartLifeCarePage() {
     }
   };
 
-  // ── 7. 핸들러: 삭제 ──
-  const handleDeleteItem = (id: string, name: string) => {
+  // ── 12. 삭제 (Supabase Delete) ──
+  const handleDeleteItem = async (id: string, name: string) => {
+    if (!currentUser) return;
     if (!confirm(`'${name}' 소모품을 목록에서 삭제하시겠습니까?`)) {
       return;
     }
+
+    // Supabase DB Delete
+    const supabase = getSupabaseClient();
+    if (supabase && currentUserId) {
+      try {
+        await supabase.from("consumable_items").delete().eq("id", id);
+      } catch (err) {
+        console.warn("Supabase DELETE 실패", err);
+      }
+    }
+
     const updated = items.filter((i) => i.id !== id);
-    saveItems(updated);
+    saveUserItems(currentUser, updated);
     if (activeDetailItem?.id === id) {
       setActiveDetailItem(null);
     }
   };
 
-  // 프로그레스 바 색상 매핑
+  // 필터 및 통계
+  const filteredItems = items.filter((item) => {
+    if (selectedCategory === "전체") return true;
+    return item.category === selectedCategory;
+  });
+
+  const totalCount = items.length;
+  const goodCount = items.filter((i) => i.analysis.replacement_analysis.status === "GOOD").length;
+  const cautionCount = items.filter((i) => i.analysis.replacement_analysis.status === "CAUTION").length;
+  const replaceNowCount = items.filter((i) => i.analysis.replacement_analysis.status === "REPLACE_NOW").length;
+
   const getStatusColor = (status: string) => {
     if (status === "GOOD") return "var(--seed-color-success)";
     if (status === "CAUTION") return "var(--seed-color-warning)";
     return "var(--seed-color-error)";
   };
 
+  // ==========================================================================
+  // [A] 로그인하지 않은 경우 ➜ 제니트리 Auth 화면 + 하단 앱 설치 버튼
+  // ==========================================================================
+  if (!currentUser) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          backgroundColor: "#F6F8FA",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "24px 16px",
+        }}
+      >
+        <div
+          className="jt-card"
+          style={{
+            maxWidth: "420px",
+            width: "100%",
+            padding: "36px 32px",
+            textAlign: "center",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.06)",
+          }}
+        >
+          {/* 제니트리 정품 공식 로고 (세로형) */}
+          <div style={{ marginBottom: "24px", display: "flex", justifyContent: "center" }}>
+            <ZenitreeLogo height={52} theme="light" variant="v" />
+          </div>
+
+          <h1 style={{ fontSize: "18px", fontWeight: "800", color: "#1F2328", marginBottom: "6px" }}>
+            스마트 라이프 소모품 케어 AI
+          </h1>
+          <p style={{ fontSize: "13px", color: "#6B7280", marginBottom: "24px" }}>
+            {authMode === "login"
+              ? "이메일 계정으로 로그인하여 나만의 소모품을 관리하세요."
+              : "간편 이메일 회원가입으로 계정별 전용 자산을 보호하세요."}
+          </p>
+
+          {/* 에러 메시지 */}
+          {authError && (
+            <div
+              style={{
+                backgroundColor: "#FEF2F2",
+                color: "#DC2626",
+                border: "1px solid #FCA5A5",
+                borderRadius: "6px",
+                padding: "8px 12px",
+                fontSize: "12px",
+                marginBottom: "16px",
+                textAlign: "left",
+              }}
+            >
+              {authError}
+            </div>
+          )}
+
+          {/* 로그인 / 회원가입 폼 */}
+          <form onSubmit={handleAuthSubmit} style={{ textAlign: "left" }}>
+            <div style={{ marginBottom: "14px" }}>
+              <label style={{ display: "block", fontSize: "12px", fontWeight: "600", marginBottom: "4px" }}>
+                이메일 주소
+              </label>
+              <input
+                type="email"
+                className="jt-input font-num"
+                placeholder="name@company.com"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                required
+              />
+            </div>
+
+            <div style={{ marginBottom: "20px" }}>
+              <label style={{ display: "block", fontSize: "12px", fontWeight: "600", marginBottom: "4px" }}>
+                비밀번호 (6자리 이상)
+              </label>
+              <input
+                type="password"
+                className="jt-input font-num"
+                placeholder="••••••••"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                required
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="jt-btn-primary"
+              style={{ width: "100%", padding: "10px", fontSize: "14px" }}
+              disabled={isAuthLoading}
+            >
+              {isAuthLoading ? "처리 중..." : authMode === "login" ? "이메일 로그인" : "회원가입 완료"}
+            </button>
+          </form>
+
+          {/* 전환 링크 */}
+          <div style={{ marginTop: "18px", fontSize: "13px", color: "#6B7280" }}>
+            {authMode === "login" ? (
+              <>
+                계정이 없으신가요?{" "}
+                <button
+                  onClick={() => {
+                    setAuthMode("register");
+                    setAuthError("");
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#305CDE",
+                    fontWeight: "600",
+                    cursor: "pointer",
+                  }}
+                >
+                  회원가입하기
+                </button>
+              </>
+            ) : (
+              <>
+                이미 계정이 있으신가요?{" "}
+                <button
+                  onClick={() => {
+                    setAuthMode("login");
+                    setAuthError("");
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#305CDE",
+                    fontWeight: "600",
+                    cursor: "pointer",
+                  }}
+                >
+                  로그인하기
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* ── 그 아래에 앱 설치 가능하게 하는 버튼 ── */}
+        <div style={{ maxWidth: "420px", width: "100%", marginTop: "16px", textAlign: "center" }}>
+          <button
+            onClick={handleInstallApp}
+            style={{
+              width: "100%",
+              padding: "12px 18px",
+              backgroundColor: "#FFFFFF",
+              color: "#1F2328",
+              border: "1px solid #D1D5DB",
+              borderRadius: "8px",
+              fontWeight: "700",
+              fontSize: "14px",
+              cursor: "pointer",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.05)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "8px",
+              transition: "all 0.2s",
+            }}
+          >
+            <span style={{ fontSize: "18px" }}>📲</span>
+            스마트폰 / PC에 앱 설치하기
+          </button>
+          <div style={{ fontSize: "11px", color: "#9CA3AF", marginTop: "8px" }}>
+            설치 시 홈 화면에서 웹브라우저 없이 앱처럼 바로 실행됩니다.
+          </div>
+        </div>
+
+        {/* 설치 가이드 모달 */}
+        {isInstallGuideOpen && (
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: "rgba(0, 0, 0, 0.5)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "20px",
+              zIndex: 200,
+            }}
+            onClick={() => setIsInstallGuideOpen(false)}
+          >
+            <div
+              className="jt-card"
+              style={{
+                maxWidth: "400px",
+                width: "100%",
+                padding: "24px",
+                backgroundColor: "#FFFFFF",
+                textAlign: "left",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 style={{ fontSize: "16px", fontWeight: "700", marginBottom: "10px", color: "#1F2328" }}>
+                📱 앱 설치 및 홈 화면 추가 안내
+              </h3>
+              <div style={{ fontSize: "13px", color: "#4B5563", lineHeight: "1.6", marginBottom: "16px" }}>
+                <p style={{ marginBottom: "8px" }}>
+                  <strong>아이폰(Safari):</strong> 브라우저 하단 <strong>[공유(위 화살표)]</strong> 버튼 ➜{" "}
+                  <strong>[홈 화면에 추가]</strong>를 누르시면 됩니다.
+                </p>
+                <p>
+                  <strong>안드로이드/PC(Chrome):</strong> 주소창 우측 상단의 <strong>[설치 아이콘]</strong> 또는 메뉴(⋮)에서{" "}
+                  <strong>[앱 설치]</strong>를 선택하세요.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsInstallGuideOpen(false)}
+                className="jt-btn-primary"
+                style={{ width: "100%" }}
+              >
+                확인했습니다
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ==========================================================================
+  // [B] 로그인된 경우 ➜ 제니트리 소모품 케어 메인 대시보드
+  // ==========================================================================
   return (
     <div style={{ minHeight: "100vh", backgroundColor: "var(--color-bg-base)" }}>
       {/* ── 상단 헤더 (제니트리 탑 바) ── */}
@@ -358,7 +806,7 @@ export default function SmartLifeCarePage() {
           backgroundColor: "#1F2328",
           color: "#FFFFFF",
           borderBottom: "1px solid #33383F",
-          padding: "14px 24px",
+          padding: "12px 24px",
         }}
       >
         <div
@@ -369,28 +817,76 @@ export default function SmartLifeCarePage() {
             alignItems: "center",
             justifyContent: "space-between",
             flexWrap: "wrap",
-            gap: "14px",
+            gap: "12px",
           }}
         >
-          {/* 제니트리 공식 로고 (J⁺ 심볼 및 워드마크) */}
-          <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
-            <ZenitreeLogo height={32} theme="dark" variant="horizontal" />
+          {/* 제니트리 진짜 공식 로고 (가로형) */}
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <ZenitreeLogo height={30} theme="dark" variant="h" />
             <div
               style={{
                 width: "1px",
-                height: "24px",
+                height: "20px",
                 backgroundColor: "#374151",
                 margin: "0 4px",
               }}
             />
             <div style={{ fontSize: "12px", color: "#9CA3AF" }}>
-              AI 소모품 수명 케어 시스템
+              스마트 라이프 케어 AI
             </div>
           </div>
 
-          {/* 우측 배지 및 Gemini API 액션 */}
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-            {/* Gemini API 상태 버튼 */}
+          {/* 우측 세션 및 앱 설치 & 등록 버튼 */}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+            {/* Supabase 상태 버튼 */}
+            <button
+              onClick={() => setIsSupabaseModalOpen(true)}
+              style={{
+                fontSize: "12px",
+                backgroundColor: supabaseConfigured ? "#064E3B" : "#2B313A",
+                color: supabaseConfigured ? "#34D399" : "#D1D5DB",
+                border: supabaseConfigured ? "1px solid #059669" : "1px solid #4B5563",
+                padding: "5px 10px",
+                borderRadius: "6px",
+                fontWeight: "600",
+                display: "flex",
+                alignItems: "center",
+                gap: "5px",
+                cursor: "pointer",
+              }}
+            >
+              <span
+                style={{
+                  width: "6px",
+                  height: "6px",
+                  borderRadius: "50%",
+                  backgroundColor: supabaseConfigured ? "#10B981" : "#9CA3AF",
+                }}
+              />
+              {supabaseConfigured ? "⚡ Supabase RLS 연동됨" : "⚙️ Supabase 설정"}
+            </button>
+
+            {/* 앱 설치 버튼 */}
+            <button
+              onClick={handleInstallApp}
+              style={{
+                fontSize: "12px",
+                backgroundColor: "#2B313A",
+                color: "#FFFFFF",
+                border: "1px solid #4B5563",
+                padding: "5px 10px",
+                borderRadius: "6px",
+                fontWeight: "600",
+                display: "flex",
+                alignItems: "center",
+                gap: "5px",
+                cursor: "pointer",
+              }}
+            >
+              📲 앱 설치
+            </button>
+
+            {/* Gemini API 버튼 */}
             <button
               onClick={() => setIsApiKeyModalOpen(true)}
               style={{
@@ -409,8 +905,8 @@ export default function SmartLifeCarePage() {
             >
               <span
                 style={{
-                  width: "7px",
-                  height: "7px",
+                  width: "6px",
+                  height: "6px",
                   borderRadius: "50%",
                   backgroundColor: geminiApiKey ? "#10B981" : "#9CA3AF",
                 }}
@@ -418,11 +914,41 @@ export default function SmartLifeCarePage() {
               {geminiApiKey ? "Gemini AI 연동됨" : "🔑 Gemini API 설정"}
             </button>
 
+            {/* 사용자 계정 정보 및 로그아웃 */}
+            <div
+              style={{
+                fontSize: "12px",
+                color: "#D1D5DB",
+                backgroundColor: "#2B313A",
+                padding: "5px 10px",
+                borderRadius: "6px",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+              }}
+            >
+              <span>{currentUser}</span>
+              <button
+                onClick={handleLogout}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#9CA3AF",
+                  cursor: "pointer",
+                  fontSize: "11px",
+                  textDecoration: "underline",
+                  padding: 0,
+                }}
+              >
+                로그아웃
+              </button>
+            </div>
+
             {/* 신규 등록 버튼 */}
             <button
               onClick={() => setIsModalOpen(true)}
               className="jt-btn-accent"
-              style={{ padding: "7px 14px", fontSize: "13px" }}
+              style={{ padding: "6px 12px", fontSize: "13px" }}
             >
               + 소모품 등록 & AI 분석
             </button>
@@ -430,7 +956,7 @@ export default function SmartLifeCarePage() {
         </div>
       </header>
 
-      {/* ── 메인 컨테이너 ── */}
+      {/* ── 메인 대시보드 ── */}
       <main className="jt-container">
         {/* ── 1. 대시보드 KPI 요약 카드 ── */}
         <section
@@ -441,17 +967,15 @@ export default function SmartLifeCarePage() {
             marginBottom: "28px",
           }}
         >
-          {/* 총 자산 */}
           <div className="jt-card" style={{ padding: "20px" }}>
             <div style={{ fontSize: "13px", color: "var(--color-text-sub)", marginBottom: "4px" }}>
-              총 관리 품목
+              내 관리 품목
             </div>
             <div style={{ fontSize: "28px", fontWeight: "800", color: "#1F2328" }} className="font-num">
               {totalCount} <span style={{ fontSize: "14px", fontWeight: "500" }}>개</span>
             </div>
           </div>
 
-          {/* 정상 상태 */}
           <div className="jt-card" style={{ padding: "20px", borderLeft: "4px solid #14A870" }}>
             <div style={{ fontSize: "13px", color: "var(--color-text-sub)", marginBottom: "4px" }}>
               수명 양호 (GOOD)
@@ -461,7 +985,6 @@ export default function SmartLifeCarePage() {
             </div>
           </div>
 
-          {/* 주의/점검 */}
           <div className="jt-card" style={{ padding: "20px", borderLeft: "4px solid #F0B01C" }}>
             <div style={{ fontSize: "13px", color: "var(--color-text-sub)", marginBottom: "4px" }}>
               점검 권장 (CAUTION)
@@ -471,7 +994,6 @@ export default function SmartLifeCarePage() {
             </div>
           </div>
 
-          {/* 즉시 교체 */}
           <div
             className="jt-card"
             style={{
@@ -523,7 +1045,7 @@ export default function SmartLifeCarePage() {
           ))}
         </div>
 
-        {/* ── 3. 소모품 카드 리스트 ── */}
+        {/* ── 3. 소모품 카드 그리드 ── */}
         {filteredItems.length === 0 ? (
           <div
             className="jt-card"
@@ -564,7 +1086,6 @@ export default function SmartLifeCarePage() {
                   }}
                 >
                   <div>
-                    {/* 상단 뱃지 라인 */}
                     <div
                       style={{
                         display: "flex",
@@ -583,7 +1104,6 @@ export default function SmartLifeCarePage() {
                       {status === "REPLACE_NOW" && <span className="jt-badge jt-badge-danger">! 즉시교체</span>}
                     </div>
 
-                    {/* 품목 타이틀 */}
                     <h3
                       style={{
                         fontSize: "16px",
@@ -598,7 +1118,6 @@ export default function SmartLifeCarePage() {
                       분류: {item.category} · 조건: {item.condition === "harsh" ? "가혹 주행/가동" : "일반 환경"}
                     </div>
 
-                    {/* 수명 게이지 프로그레스 바 */}
                     <div style={{ marginBottom: "16px" }}>
                       <div
                         style={{
@@ -634,7 +1153,6 @@ export default function SmartLifeCarePage() {
                       </div>
                     </div>
 
-                    {/* 상세 스펙 메타 정보 */}
                     <div
                       style={{
                         backgroundColor: "#F9FAFB",
@@ -662,7 +1180,6 @@ export default function SmartLifeCarePage() {
                     </div>
                   </div>
 
-                  {/* 하단 카드 버튼 액션 */}
                   <div
                     style={{
                       display: "flex",
@@ -719,7 +1236,124 @@ export default function SmartLifeCarePage() {
         )}
       </main>
 
-      {/* ── 4. Gemini API Key 설정 모달 ── */}
+      {/* ── 4. Supabase 연동 설정 모달 ── */}
+      {isSupabaseModalOpen && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+            zIndex: 110,
+          }}
+          onClick={() => setIsSupabaseModalOpen(false)}
+        >
+          <div
+            className="jt-card"
+            style={{
+              maxWidth: "540px",
+              width: "100%",
+              padding: "28px",
+              backgroundColor: "#FFFFFF",
+              position: "relative",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setIsSupabaseModalOpen(false)}
+              style={{
+                position: "absolute",
+                top: "20px",
+                right: "20px",
+                border: "none",
+                background: "transparent",
+                fontSize: "20px",
+                cursor: "pointer",
+                color: "#6B7280",
+              }}
+            >
+              ✕
+            </button>
+
+            <h3 style={{ fontSize: "18px", fontWeight: "800", color: "#1F2328", marginBottom: "8px" }}>
+              ⚡ Supabase 클라우드 데이터베이스 설정
+            </h3>
+            <p style={{ fontSize: "13px", color: "#6B7280", lineHeight: "1.6", marginBottom: "16px" }}>
+              Supabase 프로젝트를 연결하시면 로그인 계정별로 데이터가 완전 격리(RLS)되어 실시간 저장됩니다.
+            </p>
+
+            <div style={{ marginBottom: "14px" }}>
+              <label style={{ display: "block", fontSize: "12px", fontWeight: "600", marginBottom: "4px" }}>
+                Supabase Project URL
+              </label>
+              <input
+                type="text"
+                className="jt-input font-num"
+                placeholder="https://xyzcompany.supabase.co"
+                value={tempSbUrl}
+                onChange={(e) => setTempSbUrl(e.target.value)}
+              />
+            </div>
+
+            <div style={{ marginBottom: "16px" }}>
+              <label style={{ display: "block", fontSize: "12px", fontWeight: "600", marginBottom: "4px" }}>
+                Supabase Anon Key
+              </label>
+              <input
+                type="password"
+                className="jt-input font-num"
+                placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                value={tempSbKey}
+                onChange={(e) => setTempSbKey(e.target.value)}
+              />
+            </div>
+
+            <div
+              style={{
+                backgroundColor: "#F0FDF4",
+                border: "1px solid #BBF7D0",
+                padding: "12px",
+                borderRadius: "6px",
+                fontSize: "12px",
+                color: "#166534",
+                lineHeight: "1.6",
+                marginBottom: "20px",
+              }}
+            >
+              📌 <strong>테이블 생성 안내:</strong> 프로젝트 내{" "}
+              <code>supabase/migrations/001_create_consumables_schema_with_rls.sql</code> 파일의 쿼리를 Supabase 대시보드의{" "}
+              <strong>SQL Editor</strong>에서 실행해 주세요.
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setTempSbUrl("");
+                  setTempSbKey("");
+                  saveSupabaseCredentials("", "");
+                  setSupabaseConfigured(false);
+                  setIsSupabaseModalOpen(false);
+                }}
+                className="jt-btn-secondary"
+              >
+                연결 해제 (로컬 모드)
+              </button>
+              <button type="button" onClick={handleSaveSupabaseConfig} className="jt-btn-primary">
+                저장 및 연결
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 5. Gemini API Key 설정 모달 ── */}
       {isApiKeyModalOpen && (
         <div
           style={{
@@ -768,7 +1402,7 @@ export default function SmartLifeCarePage() {
               🔑 Google Gemini AI API 설정
             </h3>
             <p style={{ fontSize: "13px", color: "#6B7280", lineHeight: "1.6", marginBottom: "16px" }}>
-              실제 Google Gemini 모델을 통해 제품 라벨 이미지 인식과 실시간 수명 분석을 진행하려면 API 키를 입력해 주세요. (키가 없으면 내장된 공식 매뉴얼 데이터베이스로 안전하게 분석됩니다)
+              실제 Google Gemini 모델을 통해 제품 라벨 이미지 인식과 실시간 수명 분석을 진행하려면 API 키를 입력해 주세요.
             </p>
 
             <div style={{ marginBottom: "16px" }}>
@@ -803,7 +1437,7 @@ export default function SmartLifeCarePage() {
               >
                 aistudio.google.com
               </a>
-              )에서 무료로 API 키를 즉시 발급받으실 수 있습니다. 입력된 키는 브라우저 로컬 저장소에만 안전하게 보관됩니다.
+              )에서 무료로 API 키를 발급받으실 수 있습니다.
             </div>
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
@@ -827,7 +1461,7 @@ export default function SmartLifeCarePage() {
         </div>
       )}
 
-      {/* ── 5. AI 진단 상세 모달 (JSON 스키마 결과 뷰어) ── */}
+      {/* ── 6. AI 진단 상세 모달 ── */}
       {activeDetailItem && (
         <div
           style={{
@@ -885,7 +1519,6 @@ export default function SmartLifeCarePage() {
               {activeDetailItem.name} AI 케어 진단
             </h2>
 
-            {/* AI 요약 */}
             <div
               style={{
                 backgroundColor: "#EEF2FF",
@@ -902,7 +1535,6 @@ export default function SmartLifeCarePage() {
               <p style={{ marginTop: "4px" }}>{activeDetailItem.analysis.user_summary}</p>
             </div>
 
-            {/* 교체 지연 시 위험 요소 경고 */}
             <div
               style={{
                 backgroundColor: "#FEF2F2",
@@ -920,7 +1552,6 @@ export default function SmartLifeCarePage() {
               </p>
             </div>
 
-            {/* 관리 팁 */}
             <div style={{ marginBottom: "20px" }}>
               <h4 style={{ fontSize: "14px", fontWeight: "700", color: "#1F2328", marginBottom: "8px" }}>
                 💡 제조사 권장 유지관리 팁
@@ -932,7 +1563,6 @@ export default function SmartLifeCarePage() {
               </ul>
             </div>
 
-            {/* JSON 원문 보기 토글 */}
             <div style={{ borderTop: "1px solid #E5E7EB", paddingTop: "16px" }}>
               <button
                 onClick={() => setShowJsonRaw(!showJsonRaw)}
@@ -970,7 +1600,7 @@ export default function SmartLifeCarePage() {
         </div>
       )}
 
-      {/* ── 6. 신규 소모품 등록 & AI 분석 모달 ── */}
+      {/* ── 7. 신규 등록 모달 ── */}
       {isModalOpen && (
         <div
           style={{
@@ -1275,7 +1905,7 @@ export default function SmartLifeCarePage() {
                 </div>
               </div>
 
-              {/* 하단 버튼 및 로딩 표시 */}
+              {/* 하단 액션 버튼 */}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
                 <button
                   type="button"
