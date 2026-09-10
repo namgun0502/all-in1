@@ -242,6 +242,25 @@ export default function SmartLifeCarePage() {
     }
   };
 
+  // ── 7-1. Windows 바탕화면 바로가기(.url) 원클릭 생성 헬퍼 ──
+  const handleCreateDesktopShortcut = () => {
+    if (typeof window === "undefined") return;
+    const currentOrigin = window.location.origin;
+    // 윈도우 표준 인터넷 바로가기 파일 포맷
+    const shortcutContent = `[InternetShortcut]\r\nURL=${currentOrigin}/\r\nIconIndex=0\r\nIconFile=${currentOrigin}/brand/logo/logo-sky.svg\r\n`;
+    const blob = new Blob([shortcutContent], { type: "application/x-mswinurl;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "제니트리 스마트케어.url";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setInstallToast("🖥️ 바탕화면 바로가기 파일이 다운로드되었습니다! 바탕화면에 끌어다 놓으시면 됩니다.");
+    setTimeout(() => setInstallToast(null), 4500);
+  };
+
   // ── 8. 회원가입 및 로그인 핸들러 ──
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -787,60 +806,108 @@ export default function SmartLifeCarePage() {
           </div>
         </div>
 
-        {/* ── 그 아래에 앱 설치 가능하게 하는 버튼 ── */}
+        {/* ── 그 아래에 앱 설치 및 바탕화면 바로가기 버튼 ── */}
         <div style={{ maxWidth: "420px", width: "100%", marginTop: "16px", textAlign: "center" }}>
           {isAlreadyInstalled ? (
-            <div
-              style={{
-                width: "100%",
-                padding: "12px 18px",
-                backgroundColor: "#F0FDF4",
-                color: "#15803D",
-                border: "1.5px solid #86EFAC",
-                borderRadius: "8px",
-                fontWeight: "700",
-                fontSize: "14px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-                boxShadow: "0 2px 6px rgba(34, 197, 94, 0.1)",
-              }}
-            >
-              <span style={{ fontSize: "18px" }}>✅</span>
-              현재 기기에 전용 앱으로 설치되어 실행 중입니다
+            <div>
+              <div
+                style={{
+                  width: "100%",
+                  padding: "12px 18px",
+                  backgroundColor: "#F0FDF4",
+                  color: "#15803D",
+                  border: "1.5px solid #86EFAC",
+                  borderRadius: "8px",
+                  fontWeight: "700",
+                  fontSize: "14px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "8px",
+                  boxShadow: "0 2px 6px rgba(34, 197, 94, 0.1)",
+                }}
+              >
+                <span style={{ fontSize: "18px" }}>✅</span>
+                현재 기기에 전용 앱으로 설치되어 실행 중입니다
+              </div>
+
+              {/* 바탕화면 아이콘 추가 보조 버튼 */}
+              <button
+                onClick={handleCreateDesktopShortcut}
+                type="button"
+                style={{
+                  marginTop: "8px",
+                  width: "100%",
+                  padding: "9px 14px",
+                  backgroundColor: "#FFFFFF",
+                  color: "#0369A1",
+                  border: "1px dashed #38BDF8",
+                  borderRadius: "6px",
+                  fontSize: "12px",
+                  fontWeight: "600",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "6px",
+                  transition: "all 0.2s",
+                }}
+              >
+                <span>🖥️</span>
+                바탕화면에 바로가기 아이콘 1초 추가하기
+              </button>
+              <div style={{ fontSize: "11px", color: "#9CA3AF", marginTop: "6px" }}>
+                바탕화면에 아이콘이 안 보이시면 위 버튼을 눌러 바탕화면에 바로 놓으실 수 있습니다.
+              </div>
             </div>
           ) : (
-            <button
-              onClick={handleInstallApp}
-              type="button"
-              style={{
-                width: "100%",
-                padding: "12px 18px",
-                backgroundColor: "#FFFFFF",
-                color: "#0369A1",
-                border: "1.5px solid #38BDF8",
-                borderRadius: "8px",
-                fontWeight: "700",
-                fontSize: "14px",
-                cursor: "pointer",
-                boxShadow: "0 2px 6px rgba(56, 189, 248, 0.15)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-                transition: "all 0.2s",
-              }}
-            >
-              <span style={{ fontSize: "18px" }}>📲</span>
-              스마트폰 / PC에 앱 바로 설치하기
-            </button>
+            <div>
+              <button
+                onClick={handleInstallApp}
+                type="button"
+                style={{
+                  width: "100%",
+                  padding: "12px 18px",
+                  backgroundColor: "#FFFFFF",
+                  color: "#0369A1",
+                  border: "1.5px solid #38BDF8",
+                  borderRadius: "8px",
+                  fontWeight: "700",
+                  fontSize: "14px",
+                  cursor: "pointer",
+                  boxShadow: "0 2px 6px rgba(56, 189, 248, 0.15)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "8px",
+                  transition: "all 0.2s",
+                }}
+              >
+                <span style={{ fontSize: "18px" }}>📲</span>
+                스마트폰 / PC에 앱 바로 설치하기
+              </button>
+              <div style={{ fontSize: "11px", color: "#9CA3AF", marginTop: "6px" }}>
+                설치 시 윈도우 바탕화면 및 홈 화면에 앱 아이콘이 바로 추가됩니다.
+              </div>
+
+              {/* 브라우저 설치 팝업 없이 바로가기 파일만 바로 받고 싶을 때를 위한 옵션 */}
+              <button
+                onClick={handleCreateDesktopShortcut}
+                type="button"
+                style={{
+                  marginTop: "6px",
+                  background: "none",
+                  border: "none",
+                  color: "#6B7280",
+                  fontSize: "11px",
+                  cursor: "pointer",
+                  textDecoration: "underline",
+                }}
+              >
+                🖥️ 또는 PC 바탕화면 바로가기 파일 즉시 다운로드
+              </button>
+            </div>
           )}
-          <div style={{ fontSize: "11px", color: "#9CA3AF", marginTop: "8px" }}>
-            {isAlreadyInstalled
-              ? "바탕화면 및 앱 목록에 설치된 독립형 앱으로 안전하게 실행 중입니다."
-              : "클릭 시 복잡한 과정 없이 홈 화면/바탕화면에 앱으로 즉시 설치됩니다."}
-          </div>
         </div>
 
         {/* 심플한 즉시 설치 안내 토스트 (복잡한 팝업 모달 대신 깔끔한 1줄 알림) */}

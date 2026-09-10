@@ -6,27 +6,63 @@
   "scope": "/",
   "id": "/",
   "display": "standalone",
+  "display_override": [
+    "window-controls-overlay",
+    "standalone",
+    "minimal-ui"
+  ],
   "background_color": "#F0F9FF",
   "theme_color": "#38BDF8",
   "prefer_related_applications": false,
+  "categories": [
+    "lifestyle",
+    "productivity",
+    "utilities"
+  ],
   "icons": [
     {
       "src": "/brand/logo/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/logo/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
     },
     {
       "src": "/brand/logo/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/logo/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     },
     {
       "src": "/brand/logo/logo-sky.svg",
       "sizes": "192x192 512x512",
       "type": "image/svg+xml",
       "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "소모품 관리",
+      "short_name": "소모품",
+      "description": "소모품 목록 및 교체 주기 확인",
+      "url": "/",
+      "icons": [
+        {
+          "src": "/brand/logo/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     }
   ]
 }
