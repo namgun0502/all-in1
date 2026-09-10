@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 // ============================================================================
 // 제니트리 스마트 라이프 소모품 케어 AI 앱 (app/page.tsx)
@@ -62,6 +62,8 @@ export default function SmartLifeCarePage() {
   // ── 3. 소모품 목록 및 대시보드 상태 ──
   const [items, setItems] = useState<ConsumableItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>("전체");
+  // 상태별 필터링: "ALL"(내 관리 품목 전체) | "GOOD" | "CAUTION" | "REPLACE_NOW"
+  const [selectedStatus, setSelectedStatus] = useState<"ALL" | "GOOD" | "CAUTION" | "REPLACE_NOW">("ALL");
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState<boolean>(false);
   const [activeDetailItem, setActiveDetailItem] = useState<ConsumableItem | null>(null);
@@ -79,6 +81,7 @@ export default function SmartLifeCarePage() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [imageMimeType, setImageMimeType] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 신규 등록 폼 상태
@@ -356,13 +359,14 @@ export default function SmartLifeCarePage() {
     alert(trimmed ? "Google Gemini API 키가 저장되었습니다." : "API 키가 삭제되었습니다.");
   };
 
-  // ── 10. 이미지 업로드 처리 ──
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (file.size > 4 * 1024 * 1024) {
-      alert("이미지 크기는 최대 4MB까지 지원됩니다.");
+  // ── 10. 이미지 업로드 & 드래그앤드롭 처리 공통 함수 ──
+  const processImageFile = (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      alert("이미지 파일(JPG, PNG, WebP 등)만 첨부할 수 있습니다.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert("이미지 크기는 최대 5MB까지 지원됩니다.");
       return;
     }
 
@@ -377,6 +381,26 @@ export default function SmartLifeCarePage() {
       }
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) processImageFile(file);
+  };
+
+  // 장착일 선택 시 오늘 기준 경과 개월 수 자동 계산
+  const calculateElapsedMonths = (installedDateStr: string): number => {
+    if (!installedDateStr) return 0;
+    const installDate = new Date(installedDateStr);
+    const today = new Date();
+    if (isNaN(installDate.getTime())) return 0;
+
+    const diffTime = today.getTime() - installDate.getTime();
+    if (diffTime <= 0) return 0;
+
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    const months = Math.round(diffDays / 30.4);
+    return Math.max(0, months);
   };
 
   const handleClearImage = () => {
@@ -399,38 +423,31 @@ export default function SmartLifeCarePage() {
     setIsAiLoading(true);
     let finalAnalysis: CareAnalysisResult;
 
-    if (geminiApiKey) {
-      try {
-        const res = await fetch("/api/analyze", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            apiKey: geminiApiKey,
-            brand: formData.brand,
-            category: formData.category,
-            itemName: formData.itemName,
-            installedDate: formData.installedDate,
-            currentUsage: Number(formData.currentUsage) || 0,
-            condition: formData.condition,
-            imageBase64: imageBase64,
-            imageMimeType: imageMimeType,
-          }),
-        });
+    // Gemini API 우선 호출 시도 (클라이언트 키 또는 서버 환경변수 키 활용)
+    try {
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          apiKey: geminiApiKey || undefined,
+          brand: formData.brand,
+          category: formData.category,
+          itemName: formData.itemName,
+          installedDate: formData.installedDate,
+          currentUsage: Number(formData.currentUsage) || 0,
+          condition: formData.condition,
+          imageBase64: imageBase64,
+          imageMimeType: imageMimeType,
+        }),
+      });
 
-        if (res.ok) {
-          const data = await res.json();
-          finalAnalysis = data.analysis;
-        } else {
-          finalAnalysis = analyzeConsumableItem({
-            category: formData.category,
-            brand: formData.brand,
-            itemName: formData.itemName,
-            installedDate: formData.installedDate,
-            currentUsage: Number(formData.currentUsage) || 0,
-            condition: formData.condition,
-          });
-        }
-      } catch {
+      if (res.ok) {
+        const data = await res.json();
+        finalAnalysis = data.analysis;
+        console.log("[AI] Google Gemini 정밀 분석 완료:", data.modelUsed);
+      } else {
+        const errJson = await res.json().catch(() => null);
+        console.warn("[AI] Gemini API 안내 (로컬 정밀 분석 엔진으로 전환):", errJson?.message || res.statusText);
         finalAnalysis = analyzeConsumableItem({
           category: formData.category,
           brand: formData.brand,
@@ -440,7 +457,8 @@ export default function SmartLifeCarePage() {
           condition: formData.condition,
         });
       }
-    } else {
+    } catch (err: any) {
+      console.warn("[AI] 네트워크 상태 안내 (로컬 정밀 분석 엔진으로 전환):", err?.message);
       finalAnalysis = analyzeConsumableItem({
         category: formData.category,
         brand: formData.brand,
@@ -611,9 +629,22 @@ export default function SmartLifeCarePage() {
   };
 
   // 필터 및 통계
+  // 1) 상태별 필터 (ALL / GOOD / CAUTION / REPLACE_NOW)
+  // 2) 카테고리별 필터 (전체 / 차량 / 가전 / IT기기 / 생필품/기타)
   const filteredItems = items.filter((item) => {
-    if (selectedCategory === "전체") return true;
-    return item.category === selectedCategory;
+    // 상태 필터링 (내 관리 품목 전체 선택 시에는 모두 통과)
+    if (selectedStatus !== "ALL") {
+      if (item.analysis.replacement_analysis.status !== selectedStatus) {
+        return false;
+      }
+    }
+    // 카테고리 필터링
+    if (selectedCategory !== "전체") {
+      if (item.category !== selectedCategory) {
+        return false;
+      }
+    }
+    return true;
   });
 
   const totalCount = items.length;
@@ -1133,55 +1164,153 @@ export default function SmartLifeCarePage() {
 
       {/* ── 메인 대시보드 ── */}
       <main className="jt-container">
-        {/* ── 1. 대시보드 KPI 요약 카드 ── */}
+        {/* ── 1. 대시보드 KPI 요약 카드 (클릭 시 상태별 필터링) ── */}
         <section
           style={{
             display: "grid",
             gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
             gap: "16px",
-            marginBottom: "28px",
+            marginBottom: "24px",
           }}
         >
-          <div className="jt-card" style={{ padding: "20px" }}>
-            <div style={{ fontSize: "13px", color: "var(--color-text-sub)", marginBottom: "4px" }}>
-              내 관리 품목
+          {/* 카드 1: 내 관리 품목 (클릭 시 GOOD, CAUTION, REPLACE 전체 표시) */}
+          <div
+            onClick={() => setSelectedStatus("ALL")}
+            role="button"
+            tabIndex={0}
+            className="jt-card"
+            style={{
+              padding: "20px",
+              cursor: "pointer",
+              transition: "all 0.2s ease-in-out",
+              border: selectedStatus === "ALL" ? "2px solid #1F2328" : "1px solid var(--color-border-subtle)",
+              backgroundColor: selectedStatus === "ALL" ? "#F8FAFC" : "#FFFFFF",
+              boxShadow: selectedStatus === "ALL" ? "0 4px 14px rgba(31, 35, 40, 0.15)" : "var(--shadow-sm)",
+              transform: selectedStatus === "ALL" ? "translateY(-2px)" : "none",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+              <span style={{ fontSize: "13px", fontWeight: "600", color: selectedStatus === "ALL" ? "#1F2328" : "var(--color-text-sub)" }}>
+                내 관리 품목
+              </span>
+              {selectedStatus === "ALL" ? (
+                <span style={{ fontSize: "11px", fontWeight: "700", color: "#1F2328", backgroundColor: "#E2E8F0", padding: "2px 6px", borderRadius: "4px" }}>
+                  ● 전체 보기
+                </span>
+              ) : (
+                <span style={{ fontSize: "11px", color: "#9CA3AF" }}>전체</span>
+              )}
             </div>
             <div style={{ fontSize: "28px", fontWeight: "800", color: "#1F2328" }} className="font-num">
               {totalCount} <span style={{ fontSize: "14px", fontWeight: "500" }}>개</span>
             </div>
+            <div style={{ fontSize: "11px", color: "#6B7280", marginTop: "6px" }}>
+              클릭 시 전체 소모품(양호·점검·교체) 노출
+            </div>
           </div>
 
-          <div className="jt-card" style={{ padding: "20px", borderLeft: "4px solid #14A870" }}>
-            <div style={{ fontSize: "13px", color: "var(--color-text-sub)", marginBottom: "4px" }}>
-              수명 양호 (GOOD)
+          {/* 카드 2: 수명 양호 (GOOD) (클릭 시 GOOD 상태만 표시) */}
+          <div
+            onClick={() => setSelectedStatus("GOOD")}
+            role="button"
+            tabIndex={0}
+            className="jt-card"
+            style={{
+              padding: "20px",
+              cursor: "pointer",
+              transition: "all 0.2s ease-in-out",
+              border: selectedStatus === "GOOD" ? "2px solid #14A870" : "1px solid var(--color-border-subtle)",
+              borderLeft: selectedStatus === "GOOD" ? "4px solid #14A870" : "4px solid #14A870",
+              backgroundColor: selectedStatus === "GOOD" ? "#F0FDF4" : "#FFFFFF",
+              boxShadow: selectedStatus === "GOOD" ? "0 4px 14px rgba(20, 168, 112, 0.2)" : "var(--shadow-sm)",
+              transform: selectedStatus === "GOOD" ? "translateY(-2px)" : "none",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+              <span style={{ fontSize: "13px", fontWeight: "600", color: "#14A870" }}>
+                수명 양호 (GOOD)
+              </span>
+              {selectedStatus === "GOOD" && (
+                <span style={{ fontSize: "11px", fontWeight: "700", color: "#15803D", backgroundColor: "#DCFCE7", padding: "2px 6px", borderRadius: "4px" }}>
+                  ● 선택됨
+                </span>
+              )}
             </div>
             <div style={{ fontSize: "28px", fontWeight: "800", color: "#14A870" }} className="font-num">
               {goodCount} <span style={{ fontSize: "14px", fontWeight: "500", color: "#1F2328" }}>개</span>
             </div>
+            <div style={{ fontSize: "11px", color: "#15803D", marginTop: "6px" }}>
+              클릭 시 수명 양호 품목만 모아보기
+            </div>
           </div>
 
-          <div className="jt-card" style={{ padding: "20px", borderLeft: "4px solid #F0B01C" }}>
-            <div style={{ fontSize: "13px", color: "var(--color-text-sub)", marginBottom: "4px" }}>
-              점검 권장 (CAUTION)
+          {/* 카드 3: 점검 권장 (CAUTION) (클릭 시 CAUTION 상태만 표시) */}
+          <div
+            onClick={() => setSelectedStatus("CAUTION")}
+            role="button"
+            tabIndex={0}
+            className="jt-card"
+            style={{
+              padding: "20px",
+              cursor: "pointer",
+              transition: "all 0.2s ease-in-out",
+              border: selectedStatus === "CAUTION" ? "2px solid #F0B01C" : "1px solid var(--color-border-subtle)",
+              borderLeft: selectedStatus === "CAUTION" ? "4px solid #F0B01C" : "4px solid #F0B01C",
+              backgroundColor: selectedStatus === "CAUTION" ? "#FFFBEB" : "#FFFFFF",
+              boxShadow: selectedStatus === "CAUTION" ? "0 4px 14px rgba(240, 176, 28, 0.22)" : "var(--shadow-sm)",
+              transform: selectedStatus === "CAUTION" ? "translateY(-2px)" : "none",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+              <span style={{ fontSize: "13px", fontWeight: "600", color: "#B45309" }}>
+                점검 권장 (CAUTION)
+              </span>
+              {selectedStatus === "CAUTION" && (
+                <span style={{ fontSize: "11px", fontWeight: "700", color: "#92400E", backgroundColor: "#FEF3C7", padding: "2px 6px", borderRadius: "4px" }}>
+                  ● 선택됨
+                </span>
+              )}
             </div>
             <div style={{ fontSize: "28px", fontWeight: "800", color: "#B45309" }} className="font-num">
               {cautionCount} <span style={{ fontSize: "14px", fontWeight: "500", color: "#1F2328" }}>개</span>
             </div>
+            <div style={{ fontSize: "11px", color: "#B45309", marginTop: "6px" }}>
+              클릭 시 점검 대상 품목만 모아보기
+            </div>
           </div>
 
+          {/* 카드 4: 즉시 교체 필요 (REPLACE) (클릭 시 REPLACE_NOW 상태만 표시) */}
           <div
+            onClick={() => setSelectedStatus("REPLACE_NOW")}
+            role="button"
+            tabIndex={0}
             className="jt-card"
             style={{
               padding: "20px",
-              borderLeft: "4px solid #E14B4B",
-              backgroundColor: replaceNowCount > 0 ? "#FFF5F5" : "#FFFFFF",
+              cursor: "pointer",
+              transition: "all 0.2s ease-in-out",
+              border: selectedStatus === "REPLACE_NOW" ? "2px solid #E14B4B" : "1px solid var(--color-border-subtle)",
+              borderLeft: selectedStatus === "REPLACE_NOW" ? "4px solid #E14B4B" : "4px solid #E14B4B",
+              backgroundColor: selectedStatus === "REPLACE_NOW" ? "#FEF2F2" : replaceNowCount > 0 ? "#FFF5F5" : "#FFFFFF",
+              boxShadow: selectedStatus === "REPLACE_NOW" ? "0 4px 14px rgba(225, 75, 75, 0.25)" : "var(--shadow-sm)",
+              transform: selectedStatus === "REPLACE_NOW" ? "translateY(-2px)" : "none",
             }}
           >
-            <div style={{ fontSize: "13px", color: "#E14B4B", fontWeight: "600", marginBottom: "4px" }}>
-              즉시 교체 필요 (REPLACE)
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+              <span style={{ fontSize: "13px", color: "#E14B4B", fontWeight: "700" }}>
+                즉시 교체 필요 (REPLACE)
+              </span>
+              {selectedStatus === "REPLACE_NOW" && (
+                <span style={{ fontSize: "11px", fontWeight: "700", color: "#991B1B", backgroundColor: "#FEE2E2", padding: "2px 6px", borderRadius: "4px" }}>
+                  ● 선택됨
+                </span>
+              )}
             </div>
             <div style={{ fontSize: "28px", fontWeight: "800", color: "#E14B4B" }} className="font-num">
               {replaceNowCount} <span style={{ fontSize: "14px", fontWeight: "500", color: "#1F2328" }}>개</span>
+            </div>
+            <div style={{ fontSize: "11px", color: "#E14B4B", marginTop: "6px" }}>
+              클릭 시 교체 시급 품목만 모아보기
             </div>
           </div>
         </section>
@@ -1192,7 +1321,7 @@ export default function SmartLifeCarePage() {
             display: "flex",
             alignItems: "center",
             gap: "8px",
-            marginBottom: "20px",
+            marginBottom: "16px",
             borderBottom: "1px solid var(--color-border-subtle)",
             paddingBottom: "12px",
             overflowX: "auto",
@@ -1220,6 +1349,52 @@ export default function SmartLifeCarePage() {
           ))}
         </div>
 
+        {/* ── 상태 필터 활성화 시 실시간 안내 알림 바 ── */}
+        {selectedStatus !== "ALL" && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              backgroundColor: selectedStatus === "GOOD" ? "#F0FDF4" : selectedStatus === "CAUTION" ? "#FFFBEB" : "#FEF2F2",
+              border: `1px solid ${selectedStatus === "GOOD" ? "#86EFAC" : selectedStatus === "CAUTION" ? "#FDE68A" : "#FECACA"}`,
+              padding: "10px 16px",
+              borderRadius: "8px",
+              marginBottom: "20px",
+              fontSize: "13px",
+              color: selectedStatus === "GOOD" ? "#15803D" : selectedStatus === "CAUTION" ? "#92400E" : "#991B1B",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontSize: "16px" }}>
+                {selectedStatus === "GOOD" ? "●" : selectedStatus === "CAUTION" ? "▲" : "!"}
+              </span>
+              <span>
+                현재 <b>
+                  {selectedStatus === "GOOD" && "수명 양호 (GOOD)"}
+                  {selectedStatus === "CAUTION" && "점검 권장 (CAUTION)"}
+                  {selectedStatus === "REPLACE_NOW" && "즉시 교체 필요 (REPLACE)"}
+                </b> 품목만 모아보고 있습니다. (총 {filteredItems.length}개)
+              </span>
+            </div>
+            <button
+              onClick={() => setSelectedStatus("ALL")}
+              type="button"
+              style={{
+                background: "none",
+                border: "none",
+                color: "#4B5563",
+                cursor: "pointer",
+                fontSize: "12px",
+                fontWeight: "700",
+                textDecoration: "underline",
+              }}
+            >
+              ✕ 전체 품목 보기
+            </button>
+          </div>
+        )}
+
         {/* ── 3. 소모품 카드 그리드 ── */}
         {filteredItems.length === 0 ? (
           <div
@@ -1230,10 +1405,34 @@ export default function SmartLifeCarePage() {
               color: "var(--color-text-muted)",
             }}
           >
-            <p style={{ fontSize: "15px", marginBottom: "12px" }}>등록된 소모품이 없습니다.</p>
-            <button onClick={() => setIsModalOpen(true)} className="jt-btn-primary">
-              소모품 첫 등록하기
-            </button>
+            {items.length === 0 ? (
+              <>
+                <p style={{ fontSize: "15px", marginBottom: "12px" }}>등록된 소모품이 없습니다.</p>
+                <button onClick={() => setIsModalOpen(true)} className="jt-btn-primary">
+                  소모품 첫 등록하기
+                </button>
+              </>
+            ) : (
+              <>
+                <p style={{ fontSize: "15px", fontWeight: "600", color: "#374151", marginBottom: "8px" }}>
+                  선택하신 조건에 해당하는 소모품이 없습니다.
+                </p>
+                <p style={{ fontSize: "13px", color: "#6B7280", marginBottom: "16px" }}>
+                  현재 상태 필터: {selectedStatus === "GOOD" ? "수명 양호" : selectedStatus === "CAUTION" ? "점검 권장" : "즉시 교체 필요"}
+                  {selectedCategory !== "전체" && ` · 분류: ${selectedCategory}`}
+                </p>
+                <button
+                  onClick={() => {
+                    setSelectedStatus("ALL");
+                    setSelectedCategory("전체");
+                  }}
+                  className="jt-btn-primary"
+                  style={{ padding: "8px 16px", fontSize: "13px" }}
+                >
+                  내 관리 품목 전체 보기로 초기화
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <div
@@ -1728,15 +1927,30 @@ export default function SmartLifeCarePage() {
             </p>
 
             <form onSubmit={handleAddItem}>
-              {/* 이미지 사진 첨부 영역 */}
+              {/* 이미지 첨부 영역 (클릭 및 드래그 앤 드롭 지원) */}
               <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDragging(true);
+                }}
+                onDragLeave={(e) => {
+                  e.preventDefault();
+                  setIsDragging(false);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDragging(false);
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) processImageFile(file);
+                }}
                 style={{
-                  border: "2px dashed #D1D5DB",
+                  border: isDragging ? "2px dashed #0284C7" : "1.5px dashed #CBD5E1",
                   borderRadius: "8px",
-                  padding: "16px",
+                  padding: "18px 16px",
                   textAlign: "center",
-                  backgroundColor: "#F9FAFB",
+                  backgroundColor: isDragging ? "#EFF6FF" : "#F8FAFC",
                   marginBottom: "16px",
+                  transition: "all 0.2s ease-in-out",
                 }}
               >
                 {imagePreview ? (
@@ -1752,29 +1966,45 @@ export default function SmartLifeCarePage() {
                         objectFit: "contain",
                       }}
                     />
-                    <button
-                      type="button"
-                      onClick={handleClearImage}
-                      style={{
-                        fontSize: "12px",
-                        color: "#DC2626",
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        fontWeight: "600",
-                      }}
-                    >
-                      사진 삭제
-                    </button>
+                    <div style={{ display: "flex", justifyContent: "center", gap: "10px" }}>
+                      <label
+                        htmlFor="label-image-upload"
+                        style={{
+                          fontSize: "12px",
+                          color: "#0369A1",
+                          cursor: "pointer",
+                          fontWeight: "600",
+                          textDecoration: "underline",
+                        }}
+                      >
+                        다른 사진으로 변경
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleClearImage}
+                        style={{
+                          fontSize: "12px",
+                          color: "#DC2626",
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          fontWeight: "600",
+                        }}
+                      >
+                        사진 삭제
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <div>
-                    <div style={{ fontSize: "24px", marginBottom: "4px" }}>📷</div>
-                    <div style={{ fontSize: "13px", fontWeight: "600", color: "#374151" }}>
-                      제품 라벨 / 계기판 / 영수증 사진 첨부
+                    <div style={{ fontSize: isDragging ? "30px" : "26px", marginBottom: "4px", transition: "transform 0.2s" }}>
+                      {isDragging ? "📥" : "📷"}
                     </div>
-                    <div style={{ fontSize: "11px", color: "#6B7280", marginTop: "2px", marginBottom: "8px" }}>
-                      Gemini Vision AI가 이미지 속 텍스트와 모델명을 자동으로 판별합니다
+                    <div style={{ fontSize: "14px", fontWeight: "700", color: isDragging ? "#0284C7" : "#334155" }}>
+                      {isDragging ? "여기에 사진을 놓으세요! (Drop)" : "제품 라벨 / 영수증 사진 드래그 & 드롭"}
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#64748B", marginTop: "4px", marginBottom: "10px" }}>
+                      사진을 이 박스 위로 끌어다 놓거나, 아래 버튼을 눌러 선택하세요
                     </div>
                     <input
                       ref={fileInputRef}
@@ -1787,9 +2017,9 @@ export default function SmartLifeCarePage() {
                     <label
                       htmlFor="label-image-upload"
                       className="jt-btn-secondary"
-                      style={{ display: "inline-block", fontSize: "12px", padding: "6px 12px" }}
+                      style={{ display: "inline-block", fontSize: "12px", padding: "6px 14px", cursor: "pointer" }}
                     >
-                      사진 선택하기
+                      컴퓨터에서 사진 선택하기
                     </label>
                   </div>
                 )}
@@ -1805,15 +2035,17 @@ export default function SmartLifeCarePage() {
                   value={formData.category}
                   onChange={(e) => {
                     const cat = e.target.value as ItemCategory;
+                    const elapsed = calculateElapsedMonths(formData.installedDate);
                     setFormData({
                       ...formData,
                       category: cat,
                       brand: cat === "차량" ? "현대/기아" : cat === "가전" ? "LG전자" : cat === "IT기기" ? "애플" : "일반(공통)",
+                      currentUsage: cat === "차량" ? 5000 : elapsed,
                     });
                   }}
                 >
                   <option value="차량">차량 (자동차/오토바이)</option>
-                  <option value="가전">가전제품 (공기청정기/정수기 등)</option>
+                  <option value="가전">가전제품 (전자레인지/공기청정기/정수기 등)</option>
                   <option value="IT기기">IT기기 (스마트폰/노트북 배터리 등)</option>
                   <option value="생필품/기타">생필품/위생 (칫솔/필터/소모품)</option>
                 </select>
@@ -1884,14 +2116,14 @@ export default function SmartLifeCarePage() {
                 <input
                   type="text"
                   className="jt-input"
-                  placeholder="예: 엔진오일, HEPA 필터, 배터리 등"
+                  placeholder="예: 전자레인지 마그네트론, 엔진오일, 공기청정기 필터 등"
                   value={formData.itemName}
                   onChange={(e) => setFormData({ ...formData, itemName: e.target.value })}
                   required
                 />
               </div>
 
-              {/* 사용 시작일 / 장착일 */}
+              {/* 사용 시작일 / 장착일 (선택 시 사용기한 자동 계산) */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "14px" }}>
                 <div>
                   <label style={{ display: "block", fontSize: "13px", fontWeight: "600", marginBottom: "6px" }}>
@@ -1901,23 +2133,40 @@ export default function SmartLifeCarePage() {
                     type="date"
                     className="jt-input font-num"
                     value={formData.installedDate}
-                    onChange={(e) => setFormData({ ...formData, installedDate: e.target.value })}
+                    onChange={(e) => {
+                      const newDate = e.target.value;
+                      const months = calculateElapsedMonths(newDate);
+                      setFormData({
+                        ...formData,
+                        installedDate: newDate,
+                        // 가전/IT기기/생필품은 경과 개월 수 자동 입력
+                        currentUsage: formData.category === "차량" ? formData.currentUsage : months,
+                      });
+                    }}
                     required
                   />
+                  <div style={{ fontSize: "11px", color: "#059669", marginTop: "4px" }}>
+                    오늘 기준: 약 {calculateElapsedMonths(formData.installedDate)}개월 경과
+                  </div>
                 </div>
 
                 <div>
                   <label style={{ display: "block", fontSize: "13px", fontWeight: "600", marginBottom: "6px" }}>
-                    {formData.category === "차량" ? "교체 후 주행거리 (km)" : "사용 경과 (개월/추정)"}
+                    {formData.category === "차량" ? "교체 후 주행거리 (km)" : "사용 경과 (개월/자동계산)"}
                   </label>
                   <input
                     type="number"
                     className="jt-input font-num"
                     placeholder={formData.category === "차량" ? "예: 5000" : "예: 6"}
-                    value={formData.currentUsage || ""}
+                    value={formData.currentUsage === 0 ? 0 : formData.currentUsage || ""}
                     onChange={(e) => setFormData({ ...formData, currentUsage: Number(e.target.value) })}
                     min="0"
                   />
+                  <div style={{ fontSize: "11px", color: "#64748B", marginTop: "4px" }}>
+                    {formData.category === "차량"
+                      ? "차량은 실제 주행거리를 입력하세요"
+                      : "장착일에 맞춰 자동 계산됨 (직접 수정도 가능)"}
+                  </div>
                 </div>
               </div>
 

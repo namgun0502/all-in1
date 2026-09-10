@@ -116,6 +116,19 @@ export const BRAND_PRESETS: BrandPresetRule[] = [
   {
     brand: "LG전자",
     category: "가전",
+    itemName: "전자레인지 마그네트론 (초고주파 발진관)",
+    normalIntervalValue: 60, // 60개월 (약 5년)
+    harshIntervalValue: 36,  // 다빈도 사용 시 36개월 (3년)
+    unit: "개월",
+    riskDescription: "2.45GHz 마이크로파 발진 출력 저하로 음식물 가열 시간 급증, 고전압 트랜스 과열 및 작동 불능 고장 위험",
+    tips: [
+      "조리실 내 금속 식기나 알루미늄 포일을 넣고 작동시키면 마이크로파 반사로 마그네트론 수명이 급격히 단축됩니다.",
+      "음식물이 튀어 도파관(Mica 판) 커버가 오염되면 고주파 누설 및 스파크가 발생할 수 있으니 내부를 항상 청결히 닦아주세요."
+    ]
+  },
+  {
+    brand: "LG전자",
+    category: "가전",
     itemName: "퓨리케어 공기청정기 일체형 V필터",
     normalIntervalValue: 12, // 12개월
     harshIntervalValue: 6,
@@ -292,28 +305,25 @@ export function analyzeConsumableItem(params: {
 }): CareAnalysisResult {
   const { category, brand, itemName, installedDate, currentUsage, condition } = params;
 
-  // 1) 브랜드 프리셋 매칭 검색
+  // 1) 브랜드 프리셋 정밀 매칭 (품목명이 일치하거나 핵심 키워드가 맞을 때만 적용)
   let matchedPreset: BrandPresetRule | undefined;
   if (brand && brand.trim().length > 0) {
     const cleanBrand = brand.trim().toLowerCase();
+    const cleanItem = itemName.trim().toLowerCase();
+
+    // 브랜드와 품목명이 모두 일치하거나 상호 포함되는 경우만 엄격 매칭
     matchedPreset = BRAND_PRESETS.find(
       (p) =>
         p.category === category &&
-        (p.brand.toLowerCase().includes(cleanBrand) ||
-          cleanBrand.includes(p.brand.toLowerCase())) &&
-        (itemName.toLowerCase().includes(p.itemName.toLowerCase()) ||
-          p.itemName.toLowerCase().includes(itemName.toLowerCase()))
+        (p.brand.toLowerCase().includes(cleanBrand) || cleanBrand.includes(p.brand.toLowerCase())) &&
+        (cleanItem.includes(p.itemName.toLowerCase()) ||
+          p.itemName.toLowerCase().includes(cleanItem) ||
+          (cleanItem.includes("마그네트론") && p.itemName.includes("마그네트론")) ||
+          (cleanItem.includes("엔진오일") && p.itemName.includes("엔진오일")) ||
+          (cleanItem.includes("브레이크") && p.itemName.includes("브레이크")) ||
+          (cleanItem.includes("에어컨 필터") && p.itemName.includes("에어컨 필터")) ||
+          (cleanItem.includes("정수기") && p.itemName.includes("정수기")))
     );
-
-    // 브랜드명만이라도 일치하는 첫 번째 프리셋 탐색
-    if (!matchedPreset) {
-      matchedPreset = BRAND_PRESETS.find(
-        (p) =>
-          p.category === category &&
-          (p.brand.toLowerCase().includes(cleanBrand) ||
-            cleanBrand.includes(p.brand.toLowerCase()))
-      );
-    }
   }
 
   // 2) 기준 주기(Interval) 및 단위 결정
@@ -335,15 +345,66 @@ export function analyzeConsumableItem(params: {
     riskText = matchedPreset.riskDescription;
     tips = matchedPreset.tips;
   } else {
-    // Fallback: 산업 표준
-    const fallback = CATEGORY_DEFAULTS[category];
-    unit = fallback.unit;
-    intervalValue =
-      condition === "harsh"
-        ? fallback.harshIntervalValue
-        : fallback.normalIntervalValue;
-    riskText = fallback.riskDescription;
-    tips = fallback.tips;
+    // 특정 프리셋이 없는 경우: 품목명의 물리적/전기적 특성 키워드를 분석하여 정밀 맞춤 생성
+    const lowerName = itemName.toLowerCase();
+
+    if (
+      lowerName.includes("마그네트론") ||
+      lowerName.includes("초고주파") ||
+      lowerName.includes("마이크로파") ||
+      lowerName.includes("전자레인지")
+    ) {
+      unit = "개월";
+      intervalValue = condition === "harsh" ? 36 : 60; // 3년~5년
+      riskText =
+        "2.45GHz 마이크로파 발진 출력 저하로 음식물 가열 시간 급증, 고전압 트랜스/캐패시터 과부하 및 발진 불능 위험";
+      tips = [
+        "조리실 내 금속 용기나 알루미늄 포일을 넣고 가동하면 고주파가 반사되어 마그네트론 수명이 급격히 단축됩니다.",
+        "도파관(Mica) 커버에 음식물 오염이 묻으면 스파크 및 화재 위험이 있으니 청결을 유지하세요.",
+      ];
+    } else if (
+      lowerName.includes("컴프레서") ||
+      lowerName.includes("압축기") ||
+      lowerName.includes("모터")
+    ) {
+      unit = "개월";
+      intervalValue = condition === "harsh" ? 48 : 84;
+      riskText = `${itemName}의 기계적 마모 및 권선 과열로 인한 냉각/구동 효율 저하, 소음 증가 및 작동 불능 위험`;
+      tips = [
+        "방열 부위 먼지를 주기적으로 제거하여 모터/컴프레서 과열을 방지하세요.",
+      ];
+    } else if (
+      lowerName.includes("필터") ||
+      lowerName.includes("헤파") ||
+      lowerName.includes("여과")
+    ) {
+      unit = "개월";
+      intervalValue = condition === "harsh" ? 6 : 12;
+      riskText = `${itemName}의 여과 수명 한계 도달로 집진/정화력 상실 및 순환 저항 증가`;
+      tips = [
+        "겉면의 프리필터를 1~2개월마다 세척하여 사용하면 메인 필터 수명이 연장됩니다.",
+      ];
+    } else if (
+      lowerName.includes("배터리") ||
+      lowerName.includes("충전지")
+    ) {
+      unit = "개월";
+      intervalValue = condition === "harsh" ? 18 : 24;
+      riskText = "리튬이온 화학적 열화로 인한 배터리 용량 급감, 급방전 및 기기 발열 위험";
+      tips = [
+        "완전 방전을 피하고 20~80% 충전 구간을 유지하는 것이 배터리 수명 보호에 가장 좋습니다.",
+      ];
+    } else {
+      // 범용 카테고리 기본값
+      const fallback = CATEGORY_DEFAULTS[category];
+      unit = fallback.unit;
+      intervalValue =
+        condition === "harsh"
+          ? fallback.harshIntervalValue
+          : fallback.normalIntervalValue;
+      riskText = `${itemName}의 권장 사용 수명 도래로 인한 기능 효율 저하 및 내구도 감소 위험`;
+      tips = fallback.tips;
+    }
   }
 
   // 3) 잔여 수명(%) 및 건강 상태(Status) 계산
