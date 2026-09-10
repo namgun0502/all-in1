@@ -54,6 +54,7 @@ export default function SmartLifeCarePage() {
   // ── 2. PWA 앱 설치 이벤트 상태 ──
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [installToast, setInstallToast] = useState<string | null>(null);
+  const [isAlreadyInstalled, setIsAlreadyInstalled] = useState<boolean>(false);
 
   // ── 3. 소모품 목록 및 대시보드 상태 ──
   const [items, setItems] = useState<ConsumableItem[]>([]);
@@ -100,7 +101,17 @@ export default function SmartLifeCarePage() {
       setTempApiKey(savedKey);
     }
 
-    // 3) PWA 설치 이벤트 등록 (layout.tsx 인라인 스크립트와 함께 이중 캡처)
+    // 3) 이미 기기에 설치된 앱(Standalone 모드)인지 정밀 감지
+    if (typeof window !== "undefined") {
+      const isStandalone =
+        window.matchMedia("(display-mode: standalone)").matches ||
+        (window.navigator as any).standalone === true;
+      if (isStandalone) {
+        setIsAlreadyInstalled(true);
+      }
+    }
+
+    // 4) PWA 설치 이벤트 등록 (layout.tsx 인라인 스크립트와 함께 이중 캡처)
     const handleBeforeInstall = (e: Event) => {
       e.preventDefault();
       const prompt = e as BeforeInstallPromptEvent;
@@ -109,16 +120,23 @@ export default function SmartLifeCarePage() {
     };
     window.addEventListener("beforeinstallprompt", handleBeforeInstall);
 
-    // 4) 이미 캡처된 전역 변수 즉시 동기화
+    // 5) 이미 캡처된 전역 변수 즉시 동기화
     if ((window as any).__deferredInstallPrompt) {
       setDeferredPrompt((window as any).__deferredInstallPrompt);
     }
 
-    // 5) 폴링: 최대 60초 동안 1초마다 전역 변수 확인
-    //    (beforeinstallprompt가 React 마운트 전에 발동해도 반드시 잡히게)
+    // 6) 폴링: 최대 60초 동안 1초마다 전역 변수 및 설치 상태 확인
     let pollCount = 0;
     const pollTimer = setInterval(() => {
       pollCount++;
+      if (typeof window !== "undefined") {
+        const isStandalone =
+          window.matchMedia("(display-mode: standalone)").matches ||
+          (window.navigator as any).standalone === true;
+        if (isStandalone) {
+          setIsAlreadyInstalled(true);
+        }
+      }
       if ((window as any).__deferredInstallPrompt) {
         setDeferredPrompt((window as any).__deferredInstallPrompt);
         clearInterval(pollTimer);
@@ -126,7 +144,7 @@ export default function SmartLifeCarePage() {
       if (pollCount >= 60) clearInterval(pollTimer);
     }, 1000);
 
-    // 6) PWA 서비스워커 등록
+    // 7) PWA 서비스워커 등록
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch((err) => {
         console.warn("ServiceWorker 등록 알림:", err);
@@ -187,6 +205,12 @@ export default function SmartLifeCarePage() {
 
   // ── 7. PWA 앱 즉시 설치 트리거 ──
   const handleInstallApp = async () => {
+    if (isAlreadyInstalled) {
+      setInstallToast("✅ 현재 기기에 이미 전용 앱으로 설치되어 실행 중입니다!");
+      setTimeout(() => setInstallToast(null), 3000);
+      return;
+    }
+
     // React 상태와 전역 변수 둘 다 확인
     const prompt =
       deferredPrompt ||
@@ -204,14 +228,18 @@ export default function SmartLifeCarePage() {
           if (typeof window !== "undefined") {
             (window as any).__deferredInstallPrompt = null;
           }
-          setInstallToast("✅ 앱 설치 완료! 홈 화면에서 바로 실행하세요.");
+          setIsAlreadyInstalled(true);
+          setInstallToast("🎉 앱 설치가 완료되었습니다! 홈 화면/바탕화면에서 실행하세요.");
           setTimeout(() => setInstallToast(null), 4000);
         }
       } catch (err) {
-        console.warn("설치 프롬프트:", err);
+        console.warn("설치 프롬프트 실행:", err);
       }
+    } else {
+      // 아직 브라우저 준비 중인 경우 -> alert 없이 하단 1초 스낵바로만 알림
+      setInstallToast("브라우저에서 설치 준비 중입니다. 잠시 후 다시 눌러주세요.");
+      setTimeout(() => setInstallToast(null), 2500);
     }
-    // 설치 프롬프트가 없으면 아무것도 하지 않음 (alert 없음)
   };
 
   // ── 8. 회원가입 및 로그인 핸들러 ──
@@ -761,31 +789,57 @@ export default function SmartLifeCarePage() {
 
         {/* ── 그 아래에 앱 설치 가능하게 하는 버튼 ── */}
         <div style={{ maxWidth: "420px", width: "100%", marginTop: "16px", textAlign: "center" }}>
-          <button
-            onClick={handleInstallApp}
-            style={{
-              width: "100%",
-              padding: "12px 18px",
-              backgroundColor: "#FFFFFF",
-              color: "#0369A1",
-              border: "1.5px solid #38BDF8",
-              borderRadius: "8px",
-              fontWeight: "700",
-              fontSize: "14px",
-              cursor: "pointer",
-              boxShadow: "0 2px 6px rgba(56, 189, 248, 0.15)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "8px",
-              transition: "all 0.2s",
-            }}
-          >
-            <span style={{ fontSize: "18px" }}>📲</span>
-            스마트폰 / PC에 앱 바로 설치하기
-          </button>
+          {isAlreadyInstalled ? (
+            <div
+              style={{
+                width: "100%",
+                padding: "12px 18px",
+                backgroundColor: "#F0FDF4",
+                color: "#15803D",
+                border: "1.5px solid #86EFAC",
+                borderRadius: "8px",
+                fontWeight: "700",
+                fontSize: "14px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+                boxShadow: "0 2px 6px rgba(34, 197, 94, 0.1)",
+              }}
+            >
+              <span style={{ fontSize: "18px" }}>✅</span>
+              현재 기기에 전용 앱으로 설치되어 실행 중입니다
+            </div>
+          ) : (
+            <button
+              onClick={handleInstallApp}
+              type="button"
+              style={{
+                width: "100%",
+                padding: "12px 18px",
+                backgroundColor: "#FFFFFF",
+                color: "#0369A1",
+                border: "1.5px solid #38BDF8",
+                borderRadius: "8px",
+                fontWeight: "700",
+                fontSize: "14px",
+                cursor: "pointer",
+                boxShadow: "0 2px 6px rgba(56, 189, 248, 0.15)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+                transition: "all 0.2s",
+              }}
+            >
+              <span style={{ fontSize: "18px" }}>📲</span>
+              스마트폰 / PC에 앱 바로 설치하기
+            </button>
+          )}
           <div style={{ fontSize: "11px", color: "#9CA3AF", marginTop: "8px" }}>
-            클릭 시 복잡한 과정 없이 홈 화면/바탕화면에 앱으로 설치됩니다.
+            {isAlreadyInstalled
+              ? "바탕화면 및 앱 목록에 설치된 독립형 앱으로 안전하게 실행 중입니다."
+              : "클릭 시 복잡한 과정 없이 홈 화면/바탕화면에 앱으로 즉시 설치됩니다."}
           </div>
         </div>
 
@@ -860,25 +914,28 @@ export default function SmartLifeCarePage() {
 
           {/* 우측 세션 및 앱 설치 & 등록 버튼 */}
           <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-            {/* 앱 설치 버튼 */}
-            <button
-              onClick={handleInstallApp}
-              style={{
-                fontSize: "12px",
-                backgroundColor: "#2B313A",
-                color: "#FFFFFF",
-                border: "1px solid #4B5563",
-                padding: "5px 10px",
-                borderRadius: "6px",
-                fontWeight: "600",
-                display: "flex",
-                alignItems: "center",
-                gap: "5px",
-                cursor: "pointer",
-              }}
-            >
-              📲 앱 설치
-            </button>
+            {/* 앱 설치 버튼 (아직 미설치된 브라우저 환경에서만 노출) */}
+            {!isAlreadyInstalled && (
+              <button
+                onClick={handleInstallApp}
+                type="button"
+                style={{
+                  fontSize: "12px",
+                  backgroundColor: "#2B313A",
+                  color: "#FFFFFF",
+                  border: "1px solid #4B5563",
+                  padding: "5px 10px",
+                  borderRadius: "6px",
+                  fontWeight: "600",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "5px",
+                  cursor: "pointer",
+                }}
+              >
+                📲 앱 설치
+              </button>
+            )}
 
             {/* Gemini API 버튼 */}
             <button
