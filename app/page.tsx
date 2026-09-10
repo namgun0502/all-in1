@@ -89,8 +89,7 @@ export default function SmartLifeCarePage() {
 
   // ── 4. 초기화 및 세션 / PWA 이벤트 감지 ──
   useEffect(() => {
-    // 1) 자동 로그인 비활성화: 앱 접속 시 항상 로그인/회원가입 화면이 먼저 노출되도록 설정
-    // (남건 요청: 자동 로그인 되지 않고 수동으로 로그인하게 변경)
+    // 1) 자동 로그인 비활성화
     setCurrentUser(null);
     setCurrentUserId(null);
 
@@ -101,16 +100,7 @@ export default function SmartLifeCarePage() {
       setTempApiKey(savedKey);
     }
 
-    // 3) PWA 설치 이벤트(beforeinstallprompt) 등록
-    //    - layout.tsx의 인라인 스크립트가 이미 window.__deferredInstallPrompt에 저장했을 수 있음
-    //    - 이미 캡처된 경우 React 상태에도 즉시 동기화
-    if (
-      typeof window !== "undefined" &&
-      (window as any).__deferredInstallPrompt
-    ) {
-      setDeferredPrompt((window as any).__deferredInstallPrompt);
-    }
-
+    // 3) PWA 설치 이벤트 등록 (layout.tsx 인라인 스크립트와 함께 이중 캡처)
     const handleBeforeInstall = (e: Event) => {
       e.preventDefault();
       const prompt = e as BeforeInstallPromptEvent;
@@ -119,15 +109,33 @@ export default function SmartLifeCarePage() {
     };
     window.addEventListener("beforeinstallprompt", handleBeforeInstall);
 
-    // 4) PWA 필수 서비스워커(/sw.js) 등록 (브라우저가 즉시 앱 설치 가능하도록 활성화)
-    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+    // 4) 이미 캡처된 전역 변수 즉시 동기화
+    if ((window as any).__deferredInstallPrompt) {
+      setDeferredPrompt((window as any).__deferredInstallPrompt);
+    }
+
+    // 5) 폴링: 최대 60초 동안 1초마다 전역 변수 확인
+    //    (beforeinstallprompt가 React 마운트 전에 발동해도 반드시 잡히게)
+    let pollCount = 0;
+    const pollTimer = setInterval(() => {
+      pollCount++;
+      if ((window as any).__deferredInstallPrompt) {
+        setDeferredPrompt((window as any).__deferredInstallPrompt);
+        clearInterval(pollTimer);
+      }
+      if (pollCount >= 60) clearInterval(pollTimer);
+    }, 1000);
+
+    // 6) PWA 서비스워커 등록
+    if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch((err) => {
-        console.warn("PWA ServiceWorker 등록 알림:", err);
+        console.warn("ServiceWorker 등록 알림:", err);
       });
     }
 
     return () => {
       window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
+      clearInterval(pollTimer);
     };
   }, []);
 
@@ -177,9 +185,9 @@ export default function SmartLifeCarePage() {
     backdropMouseDownTarget.current = null;
   };
 
-  // ── 7. PWA 앱 즉시 설치 트리거 (복잡한 절차 없이 다이렉트 설치) ──
+  // ── 7. PWA 앱 즉시 설치 트리거 ──
   const handleInstallApp = async () => {
-    // React 상태(deferredPrompt) 또는 전역 변수(layout.tsx에서 미리 캡처) 둘 다 확인
+    // React 상태와 전역 변수 둘 다 확인
     const prompt =
       deferredPrompt ||
       (typeof window !== "undefined"
@@ -187,6 +195,7 @@ export default function SmartLifeCarePage() {
         : null);
 
     if (prompt) {
+      // 설치 프롬프트가 있으면 → 브라우저 자체 설치 팝업 바로 실행
       try {
         await prompt.prompt();
         const choice = await prompt.userChoice;
@@ -195,34 +204,14 @@ export default function SmartLifeCarePage() {
           if (typeof window !== "undefined") {
             (window as any).__deferredInstallPrompt = null;
           }
-          setInstallToast("앱 설치가 완료되었습니다! 홈 화면/바탕화면에서 바로 실행하세요.");
+          setInstallToast("✅ 앱 설치 완료! 홈 화면에서 바로 실행하세요.");
           setTimeout(() => setInstallToast(null), 4000);
         }
       } catch (err) {
-        console.warn("설치 프롬프트 알림:", err);
-      }
-    } else {
-      // 브라우저가 아직 설치 조건 확인 중이거나 이미 설치된 경우
-      const isIos =
-        typeof navigator !== "undefined" &&
-        /iphone|ipad|ipod/i.test(navigator.userAgent);
-      if (isIos) {
-        alert(
-          "📱 아이폰/아이패드 설치 방법\n\n" +
-          "1. 화면 하단 가운데 [공유 □↑] 버튼을 누르세요\n" +
-          "2. 스크롤을 내려 [홈 화면에 추가 +] 를 누르세요\n" +
-          "3. 오른쪽 위 [추가]를 누르면 설치 완료!"
-        );
-      } else {
-        alert(
-          "📲 PC / 안드로이드 설치 방법\n\n" +
-          "브라우저 주소창 오른쪽 끝에 있는\n" +
-          "[⊕ 설치] 또는 [+ 앱 설치] 버튼을 눌러주세요!\n\n" +
-          "버튼이 안 보이면 잠시 후 다시 시도해 주세요.\n" +
-          "(HTTPS 환경 배포 후 최초 방문 시 30초~1분 소요)"
-        );
+        console.warn("설치 프롬프트:", err);
       }
     }
+    // 설치 프롬프트가 없으면 아무것도 하지 않음 (alert 없음)
   };
 
   // ── 8. 회원가입 및 로그인 핸들러 ──
