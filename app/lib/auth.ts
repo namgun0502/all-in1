@@ -64,7 +64,25 @@ export async function registerUser(
 
       if (error) {
         let friendlyMsg = error.message;
-        if (error.message.includes("User already registered")) {
+        if (
+          error.message.includes("User already registered") ||
+          error.message.includes("already registered")
+        ) {
+          // 이미 가입된 계정이면 → 자동으로 로그인 시도
+          const loginResult = await supabase.auth.signInWithPassword({
+            email: cleanEmail,
+            password: password,
+          });
+          if (!loginResult.error && loginResult.data.user) {
+            const userId = loginResult.data.user.id;
+            localStorage.setItem(SESSION_STORAGE_KEY, cleanEmail);
+            localStorage.setItem(SESSION_USER_ID_KEY, userId);
+            return {
+              success: true,
+              message: "이미 가입된 계정으로 자동 로그인되었습니다!",
+              userId,
+            };
+          }
           friendlyMsg = "이미 가입되어 있는 이메일 계정입니다! 아래 '로그인하기' 버튼을 눌러 로그인해 주세요.";
         } else if (error.message.includes("Password should be at least")) {
           friendlyMsg = "비밀번호는 최소 6자리 이상이어야 합니다.";
@@ -73,18 +91,33 @@ export async function registerUser(
       }
 
       const userId = data.user?.id;
+
+      // 이메일 확인(Email Confirmation)이 켜져 있는 경우 → 즉시 signIn으로 세션 강제 획득
+      if (!data.session && data.user) {
+        const loginResult = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password: password,
+        });
+        if (!loginResult.error && loginResult.data.user) {
+          const loggedInUserId = loginResult.data.user.id;
+          localStorage.setItem(SESSION_STORAGE_KEY, cleanEmail);
+          localStorage.setItem(SESSION_USER_ID_KEY, loggedInUserId);
+          return {
+            success: true,
+            message: "회원가입 및 로그인이 완료되었습니다!",
+            userId: loggedInUserId,
+          };
+        }
+        // signIn도 실패한 경우 (Supabase 이메일 확인 필수 설정)
+        return {
+          success: false,
+          message: "회원가입은 완료되었으나 Supabase 이메일 인증이 필요합니다.\n\n📬 이메일 메일함을 확인하시거나, Supabase 대시보드 → Authentication → Providers → Email → 'Confirm email' 을 OFF로 변경해 주세요.",
+        };
+      }
+
       if (userId) {
         localStorage.setItem(SESSION_STORAGE_KEY, cleanEmail);
         localStorage.setItem(SESSION_USER_ID_KEY, userId);
-      }
-
-      // Supabase에서 이메일 컨펌이 켜져 있는 경우 안내
-      if (!data.session && data.user) {
-        return {
-          success: true,
-          message: "가입 완료! (Supabase 이메일 인증이 켜져 있을 경우 메일함을 확인해 주세요)",
-          userId,
-        };
       }
 
       return {
@@ -152,10 +185,13 @@ export async function loginUser(
 
       if (error) {
         let friendlyMsg = error.message;
-        if (error.message.includes("Invalid login credentials")) {
+        if (
+          error.message.includes("Invalid login credentials") ||
+          error.message.includes("invalid_credentials")
+        ) {
           friendlyMsg = "가입되지 않은 이메일이거나 비밀번호가 올바르지 않습니다. 계정이 없으시다면 아래 '회원가입하기'를 먼저 눌러주세요!";
         } else if (error.message.includes("Email not confirmed")) {
-          friendlyMsg = "이메일 인증이 완료되지 않았습니다. 메일함을 확인하시거나 관리자 설정을 확인해 주세요.";
+          friendlyMsg = "이메일 인증이 아직 완료되지 않았습니다.\n\n📬 가입 시 발송된 이메일 메일함을 확인하여 인증을 완료하거나,\nSupabase 대시보드 → Authentication → Providers → Email → 'Confirm email' 을 OFF로 변경해 주세요.";
         }
         return { success: false, message: friendlyMsg };
       }
