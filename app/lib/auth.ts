@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 // 사용자 인증 및 비밀번호 암호화 모듈
 // (app/lib/auth.ts)
 // 규칙 8(강력한 보안 및 암호화) 준수: Supabase Auth & Web Crypto SHA-256 해싱
@@ -40,6 +40,8 @@ const SESSION_USER_ID_KEY = "zenitree_current_user_id";
 
 /**
  * 신규 회원가입 처리 (Supabase 우선 연동)
+ * - 가입 성공 후 세션이 없으면 자동으로 로그인 시도
+ * - 이미 가입된 계정이면 자동으로 로그인 전환
  */
 export async function registerUser(
   email: string,
@@ -55,114 +57,80 @@ export async function registerUser(
 
   // 1. Supabase 연동 시도
   const supabase = getSupabaseClient();
-  if (supabase) {
-    try {
-      const { data, error } = await supabase.auth.signUp({
-        email: cleanEmail,
-        password: password,
-      });
+  try {
+    const { data, error } = await supabase.auth.signUp({
+      email: cleanEmail,
+      password: password,
+    });
 
-      if (error) {
-        let friendlyMsg = error.message;
-        if (
-          error.message.includes("User already registered") ||
-          error.message.includes("already registered")
-        ) {
-          // 이미 가입된 계정이면 → 자동으로 로그인 시도
-          const loginResult = await supabase.auth.signInWithPassword({
-            email: cleanEmail,
-            password: password,
-          });
-          if (!loginResult.error && loginResult.data.user) {
-            const userId = loginResult.data.user.id;
-            localStorage.setItem(SESSION_STORAGE_KEY, cleanEmail);
-            localStorage.setItem(SESSION_USER_ID_KEY, userId);
-            return {
-              success: true,
-              message: "이미 가입된 계정으로 자동 로그인되었습니다!",
-              userId,
-            };
-          }
-          friendlyMsg = "이미 가입되어 있는 이메일 계정입니다! 아래 '로그인하기' 버튼을 눌러 로그인해 주세요.";
-        } else if (error.message.includes("Password should be at least")) {
-          friendlyMsg = "비밀번호는 최소 6자리 이상이어야 합니다.";
-        }
-        return { success: false, message: friendlyMsg };
-      }
-
-      const userId = data.user?.id;
-
-      // 이메일 확인(Email Confirmation)이 켜져 있는 경우 → 즉시 signIn으로 세션 강제 획득
-      if (!data.session && data.user) {
+    if (error) {
+      // 이미 가입된 계정이면 -> 자동으로 로그인 시도
+      if (
+        error.message.includes("User already registered") ||
+        error.message.includes("already registered")
+      ) {
         const loginResult = await supabase.auth.signInWithPassword({
           email: cleanEmail,
           password: password,
         });
         if (!loginResult.error && loginResult.data.user) {
-          const loggedInUserId = loginResult.data.user.id;
+          const userId = loginResult.data.user.id;
           localStorage.setItem(SESSION_STORAGE_KEY, cleanEmail);
-          localStorage.setItem(SESSION_USER_ID_KEY, loggedInUserId);
+          localStorage.setItem(SESSION_USER_ID_KEY, userId);
           return {
             success: true,
-            message: "회원가입 및 로그인이 완료되었습니다!",
-            userId: loggedInUserId,
+            message: "이미 가입된 계정으로 자동 로그인되었습니다!",
+            userId,
           };
         }
-        // signIn도 실패한 경우 (Supabase 이메일 확인 필수 설정)
+        // 로그인도 실패하면 (비밀번호 불일치 등) 로그인 화면으로 안내
         return {
           success: false,
-          message: "회원가입은 완료되었으나 Supabase 이메일 인증이 필요합니다.\n\n📬 이메일 메일함을 확인하시거나, Supabase 대시보드 → Authentication → Providers → Email → 'Confirm email' 을 OFF로 변경해 주세요.",
+          message: "이미 가입되어 있는 이메일입니다. 아래 '로그인하기' 버튼을 눌러주세요.",
         };
       }
-
-      if (userId) {
-        localStorage.setItem(SESSION_STORAGE_KEY, cleanEmail);
-        localStorage.setItem(SESSION_USER_ID_KEY, userId);
+      // 비밀번호 조건 미충족
+      if (error.message.includes("Password should be at least")) {
+        return { success: false, message: "비밀번호는 최소 6자리 이상이어야 합니다." };
       }
-
-      return {
-        success: true,
-        message: "회원가입 및 로그인이 완료되었습니다!",
-        userId,
-      };
-    } catch (err: unknown) {
-      const error = err as Error;
-      return { success: false, message: `Supabase 연결 오류: ${error.message}` };
+      return { success: false, message: `가입 오류: ${error.message}` };
     }
+
+    const userId = data.user?.id;
+
+    // 세션이 없으면 (이메일 확인 설정 등) -> 바로 로그인 시도
+    if (!data.session && data.user) {
+      const loginResult = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password: password,
+      });
+      if (!loginResult.error && loginResult.data.user) {
+        const loggedInUserId = loginResult.data.user.id;
+        localStorage.setItem(SESSION_STORAGE_KEY, cleanEmail);
+        localStorage.setItem(SESSION_USER_ID_KEY, loggedInUserId);
+        return {
+          success: true,
+          message: "회원가입 및 로그인이 완료되었습니다!",
+          userId: loggedInUserId,
+        };
+      }
+    }
+
+    // 정상 가입 완료 (세션 있음)
+    if (userId) {
+      localStorage.setItem(SESSION_STORAGE_KEY, cleanEmail);
+      localStorage.setItem(SESSION_USER_ID_KEY, userId);
+    }
+
+    return {
+      success: true,
+      message: "회원가입 및 로그인이 완료되었습니다!",
+      userId,
+    };
+  } catch (err: unknown) {
+    const error = err as Error;
+    return { success: false, message: `Supabase 연결 오류: ${error.message}` };
   }
-
-  // 2. Fallback: 로컬 스토리지 모드
-  let users: UserAccount[] = [];
-  try {
-    const raw = localStorage.getItem(USERS_STORAGE_KEY);
-    users = raw ? JSON.parse(raw) : [];
-  } catch {
-    users = [];
-  }
-
-  if (users.some((u) => u.email === cleanEmail)) {
-    return { success: false, message: "이미 가입된 이메일 주소입니다. 로그인을 진행해 주세요." };
-  }
-
-  const passwordHash = await hashPassword(password);
-  // 로컬 사용자도 UUID 형식과 호환되도록 표준 UUID v4 생성
-  const cryptoUuid =
-    typeof crypto !== "undefined" && crypto.randomUUID
-      ? crypto.randomUUID()
-      : "00000000-0000-4000-8000-000000000000";
-
-  users.push({
-    id: cryptoUuid,
-    email: cleanEmail,
-    passwordHash,
-    createdAt: new Date().toISOString(),
-  });
-
-  localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
-  localStorage.setItem(SESSION_STORAGE_KEY, cleanEmail);
-  localStorage.setItem(SESSION_USER_ID_KEY, cryptoUuid);
-
-  return { success: true, message: "회원가입이 완료되었습니다!", userId: cryptoUuid };
 }
 
 /**
@@ -176,65 +144,36 @@ export async function loginUser(
 
   // 1. Supabase 연동 시도
   const supabase = getSupabaseClient();
-  if (supabase) {
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
-        password: password,
-      });
-
-      if (error) {
-        let friendlyMsg = error.message;
-        if (
-          error.message.includes("Invalid login credentials") ||
-          error.message.includes("invalid_credentials")
-        ) {
-          friendlyMsg = "가입되지 않은 이메일이거나 비밀번호가 올바르지 않습니다. 계정이 없으시다면 아래 '회원가입하기'를 먼저 눌러주세요!";
-        } else if (error.message.includes("Email not confirmed")) {
-          friendlyMsg = "이메일 인증이 아직 완료되지 않았습니다.\n\n📬 가입 시 발송된 이메일 메일함을 확인하여 인증을 완료하거나,\nSupabase 대시보드 → Authentication → Providers → Email → 'Confirm email' 을 OFF로 변경해 주세요.";
-        }
-        return { success: false, message: friendlyMsg };
-      }
-
-      const userId = data.user?.id;
-      if (userId) {
-        localStorage.setItem(SESSION_STORAGE_KEY, cleanEmail);
-        localStorage.setItem(SESSION_USER_ID_KEY, userId);
-      }
-      return { success: true, message: "로그인에 성공했습니다.", userId };
-    } catch (err: unknown) {
-      const error = err as Error;
-      return { success: false, message: `Supabase 통신 오류: ${error.message}` };
-    }
-  }
-
-  // 2. Fallback: 로컬 스토리지 모드
   try {
-    const raw = localStorage.getItem(USERS_STORAGE_KEY);
-    const users: UserAccount[] = raw ? JSON.parse(raw) : [];
-    const user = users.find((u) => u.email === cleanEmail);
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: cleanEmail,
+      password: password,
+    });
 
-    if (!user) {
-      return { success: false, message: "등록되지 않은 이메일입니다. 회원가입을 먼저 진행해 주세요." };
+    if (error) {
+      let friendlyMsg = error.message;
+      if (
+        error.message.includes("Invalid login credentials") ||
+        error.message.includes("invalid_credentials")
+      ) {
+        friendlyMsg =
+          "이메일 또는 비밀번호가 올바르지 않습니다.\n계정이 없으시면 아래 '회원가입하기'를 눌러주세요!";
+      } else if (error.message.includes("Email not confirmed")) {
+        friendlyMsg =
+          "이메일 인증이 완료되지 않았습니다.\nSupabase 대시보드 → Authentication → Email → Confirm email 을 OFF로 변경해 주세요.";
+      }
+      return { success: false, message: friendlyMsg };
     }
 
-    const passwordHash = await hashPassword(password);
-    if (user.passwordHash !== passwordHash) {
-      return { success: false, message: "비밀번호가 일치하지 않습니다. 다시 확인해 주세요." };
+    const userId = data.user?.id;
+    if (userId) {
+      localStorage.setItem(SESSION_STORAGE_KEY, cleanEmail);
+      localStorage.setItem(SESSION_USER_ID_KEY, userId);
     }
-
-    const cryptoUuid =
-      user.id && isValidUuid(user.id)
-        ? user.id
-        : typeof crypto !== "undefined" && crypto.randomUUID
-        ? crypto.randomUUID()
-        : "00000000-0000-4000-8000-000000000000";
-
-    localStorage.setItem(SESSION_STORAGE_KEY, cleanEmail);
-    localStorage.setItem(SESSION_USER_ID_KEY, cryptoUuid);
-    return { success: true, message: "로그인에 성공했습니다.", userId: cryptoUuid };
-  } catch {
-    return { success: false, message: "로그인 처리 중 오류가 발생했습니다." };
+    return { success: true, message: "로그인에 성공했습니다.", userId };
+  } catch (err: unknown) {
+    const error = err as Error;
+    return { success: false, message: `Supabase 통신 오류: ${error.message}` };
   }
 }
 
@@ -245,24 +184,22 @@ export async function syncCurrentSession(): Promise<{ email: string | null; user
   if (typeof window === "undefined") return { email: null, userId: null };
 
   const supabase = getSupabaseClient();
-  if (supabase) {
-    try {
-      const { data } = await supabase.auth.getSession();
-      if (data.session?.user) {
-        const u = data.session.user;
-        localStorage.setItem(SESSION_STORAGE_KEY, u.email || "");
-        localStorage.setItem(SESSION_USER_ID_KEY, u.id);
-        return { email: u.email || null, userId: u.id };
-      }
-    } catch (e) {
-      console.warn("세션 동기화 확인:", e);
+  try {
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.user) {
+      const u = data.session.user;
+      localStorage.setItem(SESSION_STORAGE_KEY, u.email || "");
+      localStorage.setItem(SESSION_USER_ID_KEY, u.id);
+      return { email: u.email || null, userId: u.id };
     }
+  } catch (e) {
+    console.warn("세션 동기화 확인:", e);
   }
 
   let savedUserId = localStorage.getItem(SESSION_USER_ID_KEY);
-  // 이전 구버전의 "local-user-..." 형태가 남아있다면 유효한 UUID로 교체
   if (savedUserId && !isValidUuid(savedUserId)) {
-    savedUserId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : null;
+    savedUserId =
+      typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : null;
     if (savedUserId) {
       localStorage.setItem(SESSION_USER_ID_KEY, savedUserId);
     }
@@ -282,7 +219,8 @@ export function getCurrentSession(): { email: string | null; userId: string | nu
   let savedUserId = localStorage.getItem(SESSION_USER_ID_KEY);
 
   if (savedUserId && !isValidUuid(savedUserId)) {
-    savedUserId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : null;
+    savedUserId =
+      typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : null;
     if (savedUserId) {
       localStorage.setItem(SESSION_USER_ID_KEY, savedUserId);
     }
@@ -300,12 +238,10 @@ export function getCurrentSession(): { email: string | null; userId: string | nu
 export async function logoutUser(): Promise<void> {
   if (typeof window === "undefined") return;
   const supabase = getSupabaseClient();
-  if (supabase) {
-    try {
-      await supabase.auth.signOut();
-    } catch (e) {
-      console.warn("Supabase 로그아웃 알림:", e);
-    }
+  try {
+    await supabase.auth.signOut();
+  } catch (e) {
+    console.warn("Supabase 로그아웃 알림:", e);
   }
   localStorage.removeItem(SESSION_STORAGE_KEY);
   localStorage.removeItem(SESSION_USER_ID_KEY);
