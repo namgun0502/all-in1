@@ -294,6 +294,34 @@ export default function SmartLifeCarePage() {
     }
   };
 
+  // ── 8-1. 비밀번호 재설정 이메일 발송 ──
+  const handleForgotPassword = async () => {
+    const email = authEmail.trim().toLowerCase();
+    if (!email || !email.includes("@")) {
+      setAuthError("위쪽 이메일 칸에 이메일 주소를 먼저 입력해 주세요.");
+      return;
+    }
+    setIsAuthLoading(true);
+    setAuthError("");
+    try {
+      const { getSupabaseClient } = await import("./lib/supabase");
+      const supabase = getSupabaseClient();
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: typeof window !== "undefined" ? `${window.location.origin}/` : "/",
+      });
+      if (error) {
+        setAuthError(`재설정 이메일 발송 실패: ${error.message}`);
+      } else {
+        setAuthError("");
+        alert(`✅ "${email}" 주소로 비밀번호 재설정 링크를 보냈습니다!\n이메일을 확인하시고 링크를 클릭하세요.`);
+      }
+    } catch (err: any) {
+      setAuthError(`오류: ${err.message}`);
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
   const handleLogout = async () => {
     if (confirm("로그아웃 하시겠습니까?")) {
       await logoutUser();
@@ -766,21 +794,40 @@ export default function SmartLifeCarePage() {
           <div style={{ marginTop: "18px", fontSize: "13px", color: "#6B7280" }}>
             {authMode === "login" ? (
               <>
-                계정이 없으신가요?{" "}
+                <div style={{ marginBottom: "8px" }}>
+                  계정이 없으신가요?{" "}
+                  <button
+                    onClick={() => {
+                      setAuthMode("register");
+                      setAuthError("");
+                    }}
+                    type="button"
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "#305CDE",
+                      fontWeight: "600",
+                      cursor: "pointer",
+                    }}
+                  >
+                    회원가입하기
+                  </button>
+                </div>
+                {/* 비밀번호 찾기 */}
                 <button
-                  onClick={() => {
-                    setAuthMode("register");
-                    setAuthError("");
-                  }}
+                  onClick={handleForgotPassword}
+                  type="button"
+                  disabled={isAuthLoading}
                   style={{
                     background: "none",
                     border: "none",
-                    color: "#305CDE",
-                    fontWeight: "600",
+                    color: "#9CA3AF",
+                    fontSize: "12px",
                     cursor: "pointer",
+                    textDecoration: "underline",
                   }}
                 >
-                  회원가입하기
+                  🔑 비밀번호를 잊으셨나요? (이메일로 재설정 링크 받기)
                 </button>
               </>
             ) : (
@@ -791,6 +838,7 @@ export default function SmartLifeCarePage() {
                     setAuthMode("login");
                     setAuthError("");
                   }}
+                  type="button"
                   style={{
                     background: "none",
                     border: "none",

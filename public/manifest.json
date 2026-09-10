@@ -2,23 +2,14 @@
   "name": "제니트리 스마트 라이프 소모품 케어",
   "short_name": "스마트케어",
   "description": "차량, 가전, IT기기, 생필품 수명 및 교체 주기를 관리하는 제니트리 AI 어시스턴트",
-  "start_url": "/",
+  "start_url": "/?source=pwa",
   "scope": "/",
-  "id": "/",
+  "id": "zenitree-smart-care",
   "display": "standalone",
-  "display_override": [
-    "window-controls-overlay",
-    "standalone",
-    "minimal-ui"
-  ],
   "background_color": "#F0F9FF",
   "theme_color": "#38BDF8",
   "prefer_related_applications": false,
-  "categories": [
-    "lifestyle",
-    "productivity",
-    "utilities"
-  ],
+  "categories": ["lifestyle", "productivity", "utilities"],
   "icons": [
     {
       "src": "/brand/logo/icon-192.png",
@@ -43,12 +34,6 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
-    },
-    {
-      "src": "/brand/logo/logo-sky.svg",
-      "sizes": "192x192 512x512",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
     }
   ],
   "shortcuts": [
@@ -57,12 +42,8 @@
       "short_name": "소모품",
       "description": "소모품 목록 및 교체 주기 확인",
       "url": "/",
-      "icons": [
-        {
-          "src": "/brand/logo/icon-192.png",
-          "sizes": "192x192"
-        }
-      ]
+      "icons": [{ "src": "/brand/logo/icon-192.png", "sizes": "192x192" }]
     }
   ]
 }
+
