@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 // ============================================================================
 // 제니트리 스마트 라이프 소모품 케어 AI 앱 (app/page.tsx)
@@ -55,6 +55,9 @@ export default function SmartLifeCarePage() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [installToast, setInstallToast] = useState<string | null>(null);
   const [isAlreadyInstalled, setIsAlreadyInstalled] = useState<boolean>(false);
+  // installState: "detecting"=확인 중 / "ready"=설치 가능 / "unavailable"=설치 불가
+  const [installState, setInstallState] = useState<"detecting" | "ready" | "unavailable">("detecting");
+  const [swRegistered, setSwRegistered] = useState<boolean>(false);
 
   // ── 3. 소모품 목록 및 대시보드 상태 ──
   const [items, setItems] = useState<ConsumableItem[]>([]);
@@ -102,59 +105,71 @@ export default function SmartLifeCarePage() {
     }
 
     // 3) 이미 기기에 설치된 앱(Standalone 모드)인지 정밀 감지
-    if (typeof window !== "undefined") {
+    const checkStandalone = () => {
       const isStandalone =
         window.matchMedia("(display-mode: standalone)").matches ||
         (window.navigator as any).standalone === true;
       if (isStandalone) {
         setIsAlreadyInstalled(true);
+        setInstallState("ready"); // 이미 설치됨
       }
+    };
+    checkStandalone();
+
+    // 4) PWA 서비스워커 등록 — 성공 여부 추적
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js")
+        .then((reg) => {
+          console.log("[PWA] 서비스워커 등록 성공:", reg.scope);
+          setSwRegistered(true);
+        })
+        .catch((err) => {
+          console.warn("[PWA] 서비스워커 등록 실패:", err);
+          setSwRegistered(false);
+        });
     }
 
-    // 4) PWA 설치 이벤트 등록 (layout.tsx 인라인 스크립트와 함께 이중 캡처)
+    // 5) PWA 설치 이벤트 등록 (layout.tsx 인라인 스크립트와 함께 이중 캡처)
     const handleBeforeInstall = (e: Event) => {
       e.preventDefault();
       const prompt = e as BeforeInstallPromptEvent;
       setDeferredPrompt(prompt);
+      setInstallState("ready");
       (window as any).__deferredInstallPrompt = prompt;
+      console.log("[PWA] beforeinstallprompt 이벤트 캡처 성공!");
     };
     window.addEventListener("beforeinstallprompt", handleBeforeInstall);
 
-    // 5) 이미 캡처된 전역 변수 즉시 동기화
+    // 6) 이미 캡처된 전역 변수 즉시 동기화
     if ((window as any).__deferredInstallPrompt) {
       setDeferredPrompt((window as any).__deferredInstallPrompt);
+      setInstallState("ready");
     }
 
-    // 6) 폴링: 최대 60초 동안 1초마다 전역 변수 및 설치 상태 확인
+    // 7) 폴링: 최대 60초 동안 1초마다 확인
     let pollCount = 0;
     const pollTimer = setInterval(() => {
       pollCount++;
-      if (typeof window !== "undefined") {
-        const isStandalone =
-          window.matchMedia("(display-mode: standalone)").matches ||
-          (window.navigator as any).standalone === true;
-        if (isStandalone) {
-          setIsAlreadyInstalled(true);
-        }
-      }
+      checkStandalone();
       if ((window as any).__deferredInstallPrompt) {
         setDeferredPrompt((window as any).__deferredInstallPrompt);
+        setInstallState("ready");
         clearInterval(pollTimer);
       }
-      if (pollCount >= 60) clearInterval(pollTimer);
+      // 60초 경과해도 이벤트 없으면 → unavailable 상태로 전환
+      if (pollCount >= 60) {
+        if (!deferredPrompt && !(window as any).__deferredInstallPrompt) {
+          setInstallState("unavailable");
+        }
+        clearInterval(pollTimer);
+      }
     }, 1000);
-
-    // 7) PWA 서비스워커 등록
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch((err) => {
-        console.warn("ServiceWorker 등록 알림:", err);
-      });
-    }
 
     return () => {
       window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
       clearInterval(pollTimer);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── 5. 단일 Supabase에서 본인(RLS) 소모품 목록 불러오기 ──
@@ -854,105 +869,99 @@ export default function SmartLifeCarePage() {
           </div>
         </div>
 
-        {/* ── 그 아래에 앱 설치 및 바탕화면 바로가기 버튼 ── */}
+        {/* ── 앱 설치 버튼 (설치 상태에 따라 자동 전환) ── */}
         <div style={{ maxWidth: "420px", width: "100%", marginTop: "16px", textAlign: "center" }}>
-          {isAlreadyInstalled ? (
+
+          {/* 이미 설치된 앱으로 실행 중 */}
+          {isAlreadyInstalled && (
             <div>
-              <div
-                style={{
-                  width: "100%",
-                  padding: "12px 18px",
-                  backgroundColor: "#F0FDF4",
-                  color: "#15803D",
-                  border: "1.5px solid #86EFAC",
-                  borderRadius: "8px",
-                  fontWeight: "700",
-                  fontSize: "14px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "8px",
-                  boxShadow: "0 2px 6px rgba(34, 197, 94, 0.1)",
-                }}
-              >
-                <span style={{ fontSize: "18px" }}>✅</span>
+              <div style={{
+                width: "100%", padding: "12px 18px",
+                backgroundColor: "#F0FDF4", color: "#15803D",
+                border: "1.5px solid #86EFAC", borderRadius: "8px",
+                fontWeight: "700", fontSize: "14px",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
+              }}>
+                <span style={{ fontSize: "18px" }}>&#x2705;</span>
                 현재 기기에 전용 앱으로 설치되어 실행 중입니다
               </div>
-
-              {/* 바탕화면 아이콘 추가 보조 버튼 */}
-              <button
-                onClick={handleCreateDesktopShortcut}
-                type="button"
-                style={{
-                  marginTop: "8px",
-                  width: "100%",
-                  padding: "9px 14px",
-                  backgroundColor: "#FFFFFF",
-                  color: "#0369A1",
-                  border: "1px dashed #38BDF8",
-                  borderRadius: "6px",
-                  fontSize: "12px",
-                  fontWeight: "600",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "6px",
-                  transition: "all 0.2s",
-                }}
-              >
-                <span>🖥️</span>
+              <button onClick={handleCreateDesktopShortcut} type="button" style={{
+                marginTop: "8px", width: "100%", padding: "9px 14px",
+                backgroundColor: "#FFFFFF", color: "#0369A1",
+                border: "1px dashed #38BDF8", borderRadius: "6px",
+                fontSize: "12px", fontWeight: "600", cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: "6px",
+              }}>
                 바탕화면에 바로가기 아이콘 1초 추가하기
               </button>
-              <div style={{ fontSize: "11px", color: "#9CA3AF", marginTop: "6px" }}>
-                바탕화면에 아이콘이 안 보이시면 위 버튼을 눌러 바탕화면에 바로 놓으실 수 있습니다.
+            </div>
+          )}
+
+          {/* 설치 이벤트 준비됨 → 원클릭 설치 */}
+          {!isAlreadyInstalled && installState === "ready" && (
+            <div>
+              <button onClick={handleInstallApp} type="button" style={{
+                width: "100%", padding: "14px 18px",
+                backgroundColor: "#0369A1", color: "#FFFFFF",
+                border: "none", borderRadius: "8px",
+                fontWeight: "700", fontSize: "15px", cursor: "pointer",
+                boxShadow: "0 4px 14px rgba(3,105,161,0.4)",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
+              }}>
+                <span style={{ fontSize: "20px" }}>&#x1F4F2;</span>
+                지금 바로 앱 설치하기
+              </button>
+              <div style={{ fontSize: "12px", color: "#059669", marginTop: "6px", fontWeight: "600" }}>
+                ✅ 설치 준비 완료! 버튼을 눌러 바로 설치하세요.
               </div>
             </div>
-          ) : (
+          )}
+
+          {/* 확인 중 */}
+          {!isAlreadyInstalled && installState === "detecting" && (
             <div>
-              <button
-                onClick={handleInstallApp}
-                type="button"
-                style={{
-                  width: "100%",
-                  padding: "12px 18px",
-                  backgroundColor: "#FFFFFF",
-                  color: "#0369A1",
-                  border: "1.5px solid #38BDF8",
-                  borderRadius: "8px",
-                  fontWeight: "700",
-                  fontSize: "14px",
-                  cursor: "pointer",
-                  boxShadow: "0 2px 6px rgba(56, 189, 248, 0.15)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "8px",
-                  transition: "all 0.2s",
-                }}
-              >
-                <span style={{ fontSize: "18px" }}>📲</span>
-                스마트폰 / PC에 앱 바로 설치하기
+              <button onClick={handleInstallApp} type="button" style={{
+                width: "100%", padding: "12px 18px",
+                backgroundColor: "#F8FAFC", color: "#6B7280",
+                border: "1.5px solid #D1D5DB", borderRadius: "8px",
+                fontWeight: "700", fontSize: "14px", cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
+              }}>
+                <span style={{ fontSize: "18px" }}>⏳</span>
+                앱 설치 준비 확인 중...
               </button>
               <div style={{ fontSize: "11px", color: "#9CA3AF", marginTop: "6px" }}>
-                설치 시 윈도우 바탕화면 및 홈 화면에 앱 아이콘이 바로 추가됩니다.
+                {swRegistered
+                  ? "서비스워커 등록됨 · 설치 이벤트 대기 중 (최대 30초)"
+                  : "서비스워커 등록 중... 잠시 후 다시 눌러주세요"}
               </div>
+            </div>
+          )}
 
-              {/* 브라우저 설치 팝업 없이 바로가기 파일만 바로 받고 싶을 때를 위한 옵션 */}
-              <button
-                onClick={handleCreateDesktopShortcut}
-                type="button"
-                style={{
-                  marginTop: "6px",
-                  background: "none",
-                  border: "none",
-                  color: "#6B7280",
-                  fontSize: "11px",
-                  cursor: "pointer",
-                  textDecoration: "underline",
-                }}
-              >
-                🖥️ 또는 PC 바탕화면 바로가기 파일 즉시 다운로드
+          {/* 60초 경과 → 브라우저 직접 설치 안내 */}
+          {!isAlreadyInstalled && installState === "unavailable" && (
+            <div>
+              <div style={{
+                width: "100%", padding: "14px 16px",
+                backgroundColor: "#FFF7ED", color: "#92400E",
+                border: "1.5px solid #FCD34D", borderRadius: "8px",
+                fontSize: "13px", textAlign: "left", lineHeight: "1.8",
+              }}>
+                <div style={{ fontWeight: "700", marginBottom: "4px" }}>브라우저에서 직접 설치하는 방법</div>
+                <div>크롬(Chrome): 주소창 우측 끝 ⊕ 아이콘 클릭</div>
+                <div>엣지(Edge): 주소창 우측 앱 설치 아이콘 클릭</div>
+                <div style={{ marginTop: "6px", fontSize: "11px", color: "#B45309" }}>
+                  이미 앱이 설치되어 있거나 이전에 설치를 거부한 경우일 수 있습니다.
+                </div>
+              </div>
+              <button onClick={handleCreateDesktopShortcut} type="button" style={{
+                marginTop: "8px", width: "100%", padding: "9px 14px",
+                backgroundColor: "#FFFFFF", color: "#0369A1",
+                border: "1px dashed #38BDF8", borderRadius: "6px",
+                fontSize: "12px", fontWeight: "600", cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: "6px",
+              }}>
+                대신 바탕화면 바로가기 파일 즉시 다운로드
               </button>
             </div>
           )}
