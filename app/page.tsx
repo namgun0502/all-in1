@@ -108,6 +108,13 @@ export default function SmartLifeCarePage() {
     };
     window.addEventListener("beforeinstallprompt", handleBeforeInstall);
 
+    // 4) PWA 필수 서비스워커(/sw.js) 등록 (브라우저가 즉시 앱 설치 가능하도록 활성화)
+    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch((err) => {
+        console.warn("PWA ServiceWorker 등록 알림:", err);
+      });
+    }
+
     return () => {
       window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
     };
