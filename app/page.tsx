@@ -571,7 +571,7 @@ export default function SmartLifeCarePage() {
               }}
             >
               <div>{authError}</div>
-              {authMode === "login" && (
+              {authMode === "login" ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -593,6 +593,29 @@ export default function SmartLifeCarePage() {
                   }}
                 >
                   👉 지금 바로 &apos;회원가입하기&apos;로 전환
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode("login");
+                    setAuthError("");
+                  }}
+                  style={{
+                    marginTop: "8px",
+                    width: "100%",
+                    padding: "6px 10px",
+                    backgroundColor: "#0284C7",
+                    color: "#FFFFFF",
+                    border: "none",
+                    borderRadius: "4px",
+                    fontSize: "12px",
+                    fontWeight: "600",
+                    cursor: "pointer",
+                    textAlign: "center",
+                  }}
+                >
+                  👉 이미 가입된 계정으로 &apos;로그인하기&apos;
                 </button>
               )}
             </div>

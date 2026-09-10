@@ -63,7 +63,13 @@ export async function registerUser(
       });
 
       if (error) {
-        return { success: false, message: `[Supabase 가입 실패] ${error.message}` };
+        let friendlyMsg = error.message;
+        if (error.message.includes("User already registered")) {
+          friendlyMsg = "이미 가입되어 있는 이메일 계정입니다! 아래 '로그인하기' 버튼을 눌러 로그인해 주세요.";
+        } else if (error.message.includes("Password should be at least")) {
+          friendlyMsg = "비밀번호는 최소 6자리 이상이어야 합니다.";
+        }
+        return { success: false, message: friendlyMsg };
       }
 
       const userId = data.user?.id;
