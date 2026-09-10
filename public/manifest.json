@@ -3,9 +3,12 @@
   "short_name": "스마트케어",
   "description": "차량, 가전, IT기기, 생필품 수명 및 교체 주기를 관리하는 제니트리 AI 어시스턴트",
   "start_url": "/",
+  "scope": "/",
+  "id": "/",
   "display": "standalone",
   "background_color": "#F0F9FF",
   "theme_color": "#38BDF8",
+  "prefer_related_applications": false,
   "icons": [
     {
       "src": "/brand/logo/logo-sky.svg",

@@ -53,7 +53,7 @@ export default function SmartLifeCarePage() {
 
   // ── 2. PWA 앱 설치 이벤트 상태 ──
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [isInstallGuideOpen, setIsInstallGuideOpen] = useState<boolean>(false);
+  const [installToast, setInstallToast] = useState<string | null>(null);
 
   // ── 3. 소모품 목록 및 대시보드 상태 ──
   const [items, setItems] = useState<ConsumableItem[]>([]);
@@ -166,16 +166,29 @@ export default function SmartLifeCarePage() {
     backdropMouseDownTarget.current = null;
   };
 
-  // ── 7. PWA 앱 설치 트리거 ──
+  // ── 7. PWA 앱 즉시 설치 트리거 (복잡한 절차 없이 다이렉트 설치) ──
   const handleInstallApp = async () => {
     if (deferredPrompt) {
-      await deferredPrompt.prompt();
-      const choice = await deferredPrompt.userChoice;
-      if (choice.outcome === "accepted") {
-        setDeferredPrompt(null);
+      try {
+        await deferredPrompt.prompt();
+        const choice = await deferredPrompt.userChoice;
+        if (choice.outcome === "accepted") {
+          setDeferredPrompt(null);
+          setInstallToast("앱 설치가 완료되었습니다! 홈 화면/바탕화면에서 바로 실행하세요.");
+          setTimeout(() => setInstallToast(null), 4000);
+        }
+      } catch (err) {
+        console.warn("설치 프롬프트 알림:", err);
       }
     } else {
-      setIsInstallGuideOpen(true);
+      // 이미 브라우저 주소창에 설치 아이콘이 있거나 iOS 사파리인 경우 직관적인 1줄 팁만 노출
+      const isIos = typeof navigator !== "undefined" && /iphone|ipad|ipod/i.test(navigator.userAgent);
+      if (isIos) {
+        setInstallToast("💡 아이폰: 하단 [공유] ➜ [홈 화면에 추가]를 누르시면 바로 설치됩니다!");
+      } else {
+        setInstallToast("💡 PC/안드로이드: 브라우저 주소창 우측 끝의 [설치 ⊕] 버튼을 누르시면 1초 만에 설치됩니다!");
+      }
+      setTimeout(() => setInstallToast(null), 5000);
     }
   };
 
@@ -542,21 +555,46 @@ export default function SmartLifeCarePage() {
               : "간편 이메일 회원가입으로 계정별 전용 자산을 보호하세요."}
           </p>
 
-          {/* 에러 메시지 */}
+          {/* 에러 메시지 및 간편 회원가입 전환 안내 */}
           {authError && (
             <div
               style={{
                 backgroundColor: "#FEF2F2",
-                color: "#DC2626",
+                color: "#991B1B",
                 border: "1px solid #FCA5A5",
                 borderRadius: "6px",
-                padding: "8px 12px",
+                padding: "10px 12px",
                 fontSize: "12px",
                 marginBottom: "16px",
                 textAlign: "left",
+                lineHeight: "1.5",
               }}
             >
-              {authError}
+              <div>{authError}</div>
+              {authMode === "login" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode("register");
+                    setAuthError("");
+                  }}
+                  style={{
+                    marginTop: "8px",
+                    width: "100%",
+                    padding: "6px 10px",
+                    backgroundColor: "#305CDE",
+                    color: "#FFFFFF",
+                    border: "none",
+                    borderRadius: "4px",
+                    fontSize: "12px",
+                    fontWeight: "600",
+                    cursor: "pointer",
+                    textAlign: "center",
+                  }}
+                >
+                  👉 지금 바로 &apos;회원가입하기&apos;로 전환
+                </button>
+              )}
             </div>
           )}
 
@@ -684,13 +722,13 @@ export default function SmartLifeCarePage() {
               width: "100%",
               padding: "12px 18px",
               backgroundColor: "#FFFFFF",
-              color: "#1F2328",
-              border: "1px solid #D1D5DB",
+              color: "#0369A1",
+              border: "1.5px solid #38BDF8",
               borderRadius: "8px",
               fontWeight: "700",
               fontSize: "14px",
               cursor: "pointer",
-              boxShadow: "0 2px 6px rgba(0,0,0,0.05)",
+              boxShadow: "0 2px 6px rgba(56, 189, 248, 0.15)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -699,67 +737,35 @@ export default function SmartLifeCarePage() {
             }}
           >
             <span style={{ fontSize: "18px" }}>📲</span>
-            스마트폰 / PC에 앱 설치하기
+            스마트폰 / PC에 앱 바로 설치하기
           </button>
           <div style={{ fontSize: "11px", color: "#9CA3AF", marginTop: "8px" }}>
-            설치 시 홈 화면에서 웹브라우저 없이 앱처럼 바로 실행됩니다.
+            클릭 시 복잡한 과정 없이 홈 화면/바탕화면에 앱으로 설치됩니다.
           </div>
         </div>
 
-        {/* 설치 가이드 모달 */}
-        {isInstallGuideOpen && (
+        {/* 심플한 즉시 설치 안내 토스트 (복잡한 팝업 모달 대신 깔끔한 1줄 알림) */}
+        {installToast && (
           <div
             style={{
               position: "fixed",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              backgroundColor: "rgba(0, 0, 0, 0.5)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: "20px",
-              zIndex: 200,
+              bottom: "24px",
+              left: "50%",
+              transform: "translateX(-50%)",
+              backgroundColor: "#1F2328",
+              color: "#FFFFFF",
+              padding: "12px 20px",
+              borderRadius: "8px",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
+              fontSize: "13px",
+              fontWeight: "600",
+              zIndex: 300,
+              maxWidth: "90%",
+              textAlign: "center",
+              border: "1px solid #38BDF8",
             }}
-            onMouseDown={(e) => {
-              backdropMouseDownTarget.current = e.target;
-            }}
-            onClick={(e) =>
-              handleModalCloseSafely(e, () => setIsInstallGuideOpen(false))
-            }
           >
-            <div
-              className="jt-card"
-              style={{
-                maxWidth: "400px",
-                width: "100%",
-                padding: "24px",
-                backgroundColor: "#FFFFFF",
-                textAlign: "left",
-              }}
-            >
-              <h3 style={{ fontSize: "16px", fontWeight: "700", marginBottom: "10px", color: "#1F2328" }}>
-                📱 앱 설치 및 홈 화면 추가 안내
-              </h3>
-              <div style={{ fontSize: "13px", color: "#4B5563", lineHeight: "1.6", marginBottom: "16px" }}>
-                <p style={{ marginBottom: "8px" }}>
-                  <strong>아이폰(Safari):</strong> 브라우저 하단 <strong>[공유(위 화살표)]</strong> 버튼 ➜{" "}
-                  <strong>[홈 화면에 추가]</strong>를 누르시면 됩니다.
-                </p>
-                <p>
-                  <strong>안드로이드/PC(Chrome):</strong> 주소창 우측 상단의 <strong>[설치 아이콘]</strong> 또는 메뉴(⋮)에서{" "}
-                  <strong>[앱 설치]</strong>를 선택하세요.
-                </p>
-              </div>
-              <button
-                onClick={() => setIsInstallGuideOpen(false)}
-                className="jt-btn-primary"
-                style={{ width: "100%" }}
-              >
-                확인했습니다
-              </button>
-            </div>
+            {installToast}
           </div>
         )}
       </div>
@@ -1764,6 +1770,30 @@ export default function SmartLifeCarePage() {
               </div>
             </form>
           </div>
+        </div>
+      )}
+      {/* 심플한 즉시 설치 안내 토스트 (대시보드에서도 1줄 알림 제공) */}
+      {installToast && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: "24px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            backgroundColor: "#1F2328",
+            color: "#FFFFFF",
+            padding: "12px 20px",
+            borderRadius: "8px",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
+            fontSize: "13px",
+            fontWeight: "600",
+            zIndex: 300,
+            maxWidth: "90%",
+            textAlign: "center",
+            border: "1px solid #38BDF8",
+          }}
+        >
+          {installToast}
         </div>
       )}
     </div>

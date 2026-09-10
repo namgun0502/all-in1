@@ -145,7 +145,13 @@ export async function loginUser(
       });
 
       if (error) {
-        return { success: false, message: `[로그인 실패] ${error.message}` };
+        let friendlyMsg = error.message;
+        if (error.message.includes("Invalid login credentials")) {
+          friendlyMsg = "가입되지 않은 이메일이거나 비밀번호가 올바르지 않습니다. 계정이 없으시다면 아래 '회원가입하기'를 먼저 눌러주세요!";
+        } else if (error.message.includes("Email not confirmed")) {
+          friendlyMsg = "이메일 인증이 완료되지 않았습니다. 메일함을 확인하시거나 관리자 설정을 확인해 주세요.";
+        }
+        return { success: false, message: friendlyMsg };
       }
 
       const userId = data.user?.id;
