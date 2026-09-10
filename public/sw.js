@@ -5,7 +5,7 @@
 // ============================================================
 
 // 캐시 이름 (버전 업 시 이 이름을 변경하면 이전 캐시가 자동 삭제됩니다)
-const CACHE_NAME = 'zenitree-care-v4';
+const CACHE_NAME = 'zenitree-care-v5';
 
 // 앱 설치 시 미리 저장해 둘 핵심 파일 목록
 const PRECACHE_URLS = [
