@@ -102,9 +102,20 @@ export default function SmartLifeCarePage() {
     }
 
     // 3) PWA 설치 이벤트(beforeinstallprompt) 등록
+    //    - layout.tsx의 인라인 스크립트가 이미 window.__deferredInstallPrompt에 저장했을 수 있음
+    //    - 이미 캡처된 경우 React 상태에도 즉시 동기화
+    if (
+      typeof window !== "undefined" &&
+      (window as any).__deferredInstallPrompt
+    ) {
+      setDeferredPrompt((window as any).__deferredInstallPrompt);
+    }
+
     const handleBeforeInstall = (e: Event) => {
       e.preventDefault();
-      setDeferredPrompt(e as BeforeInstallPromptEvent);
+      const prompt = e as BeforeInstallPromptEvent;
+      setDeferredPrompt(prompt);
+      (window as any).__deferredInstallPrompt = prompt;
     };
     window.addEventListener("beforeinstallprompt", handleBeforeInstall);
 
@@ -168,12 +179,22 @@ export default function SmartLifeCarePage() {
 
   // ── 7. PWA 앱 즉시 설치 트리거 (복잡한 절차 없이 다이렉트 설치) ──
   const handleInstallApp = async () => {
-    if (deferredPrompt) {
+    // React 상태(deferredPrompt) 또는 전역 변수(layout.tsx에서 미리 캡처) 둘 다 확인
+    const prompt =
+      deferredPrompt ||
+      (typeof window !== "undefined"
+        ? (window as any).__deferredInstallPrompt
+        : null);
+
+    if (prompt) {
       try {
-        await deferredPrompt.prompt();
-        const choice = await deferredPrompt.userChoice;
+        await prompt.prompt();
+        const choice = await prompt.userChoice;
         if (choice.outcome === "accepted") {
           setDeferredPrompt(null);
+          if (typeof window !== "undefined") {
+            (window as any).__deferredInstallPrompt = null;
+          }
           setInstallToast("앱 설치가 완료되었습니다! 홈 화면/바탕화면에서 바로 실행하세요.");
           setTimeout(() => setInstallToast(null), 4000);
         }
@@ -181,14 +202,26 @@ export default function SmartLifeCarePage() {
         console.warn("설치 프롬프트 알림:", err);
       }
     } else {
-      // 이미 브라우저 주소창에 설치 아이콘이 있거나 iOS 사파리인 경우 직관적인 1줄 팁만 노출
-      const isIos = typeof navigator !== "undefined" && /iphone|ipad|ipod/i.test(navigator.userAgent);
+      // 브라우저가 아직 설치 조건 확인 중이거나 이미 설치된 경우
+      const isIos =
+        typeof navigator !== "undefined" &&
+        /iphone|ipad|ipod/i.test(navigator.userAgent);
       if (isIos) {
-        setInstallToast("💡 아이폰: 하단 [공유] ➜ [홈 화면에 추가]를 누르시면 바로 설치됩니다!");
+        alert(
+          "📱 아이폰/아이패드 설치 방법\n\n" +
+          "1. 화면 하단 가운데 [공유 □↑] 버튼을 누르세요\n" +
+          "2. 스크롤을 내려 [홈 화면에 추가 +] 를 누르세요\n" +
+          "3. 오른쪽 위 [추가]를 누르면 설치 완료!"
+        );
       } else {
-        setInstallToast("💡 PC/안드로이드: 브라우저 주소창 우측 끝의 [설치 ⊕] 버튼을 누르시면 1초 만에 설치됩니다!");
+        alert(
+          "📲 PC / 안드로이드 설치 방법\n\n" +
+          "브라우저 주소창 오른쪽 끝에 있는\n" +
+          "[⊕ 설치] 또는 [+ 앱 설치] 버튼을 눌러주세요!\n\n" +
+          "버튼이 안 보이면 잠시 후 다시 시도해 주세요.\n" +
+          "(HTTPS 환경 배포 후 최초 방문 시 30초~1분 소요)"
+        );
       }
-      setTimeout(() => setInstallToast(null), 5000);
     }
   };
 

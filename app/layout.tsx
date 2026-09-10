@@ -39,6 +39,19 @@ export default function RootLayout({
         <link rel="manifest" href="/manifest.json" />
       </head>
       <body>
+        {/* PWA 설치 이벤트를 React 로드 전에 미리 전역 변수로 저장 */}
+        {/* 이렇게 해야 버튼 클릭 시 즉시 설치 프롬프트를 띄울 수 있음 */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              window.__deferredInstallPrompt = null;
+              window.addEventListener('beforeinstallprompt', function(e) {
+                e.preventDefault();
+                window.__deferredInstallPrompt = e;
+              });
+            `,
+          }}
+        />
         {children}
       </body>
     </html>
